@@ -1,0 +1,26 @@
+# Local environment and secrets
+.venv/
+.env
+.env.*
+!.env.example
+
+# Python build and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Local IDE and operating system files
+.idea/
+.DS_Store
+
+# Local documents and generated artifacts
+data/raw/
+data/parsed/
+data/chunks/
+storage/
+outputs/
