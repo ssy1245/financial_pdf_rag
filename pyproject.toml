@@ -5,6 +5,7 @@ description = "Financial PDF retrieval and question answering"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "langchain>=1.4.0",
     "pymupdf>=1.28.2",
 ]
 
