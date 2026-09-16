@@ -6,6 +6,28 @@
 
 ---
 
+## 当前进度（2026-09-16）
+
+已跑通：PDF → 文本块解析 → 清洗 → 分块 → 本地 Embedding → Dense Top-5。尚未接入 BM25、融合、重排或 LLM 回答，第一阶段 MVP 尚未完成。
+
+| 模块 | 已完成 | 尚未完成或限制 |
+|---|---|---|
+| 环境与骨架 | uv、Python 3.11、源码包布局、依赖锁文件 | `config.py`、`schemas.py`、`pipeline.py`、`cli.py` 仍为职责占位 |
+| PDF 解析 | PyMuPDF 文本块、bbox、块编号、从 1 开始的物理页码 | OCR、可靠的多栏阅读顺序、结构化表格 |
+| 清洗 | 块内断行合并、块间空行、保守清除重复底部 10-K 页脚及纯 ®/™ 块 | 通用页眉页脚检测、标题识别；金融表格关系仍需抽查 |
+| 分块 | 逐页按段落组合，长段落按词拆分；段落换行、元数据、word_count、稳定页内 ID | 当前 500/80 的单位是词而非 token；不跨页，不按章节识别边界 |
+| Embedding | SentenceTransformers 本地 `BAAI/bge-small-en-v1.5`，文档/查询向量归一化 | tokenizer 长度与截断检查、编码策略验证、向量缓存 |
+| Dense 检索 | NumPy 内存矩阵点积排序，返回 score/page/chunk_id/text | 持久化向量索引、索引配置兼容检查；`vector_store.py` 仍未实现 |
+| 测试 | 清洗和分块 19 项；截图中的 8 题 Dense 流程测试 | 标准证据、相关性指标和正式对比实验 |
+
+最近验证：Apple PDF 共 80 页，生成 132 个 chunks，最大 500 词；清理 58 个目标页脚块、16 个纯符号块。19 项单元测试通过，8 项实际模型测试通过，保存了 8 × Top-5 检索结果。上述数字是当前样本文档的验证记录，不是固定验收阈值。
+
+**8 题测试通过只说明检索流程、排序与证据映射通过检查，不说明回答正确，也不代表 Recall/MRR 达标。**
+
+> 下文 Phase 为长期目标；当前完成情况以本节和第 32 节为准，具体下一步见第 5.3 节。
+
+---
+
 ## 1. 项目最终目标
 
 用户上传一份金融 PDF，例如 Apple 10-K，然后可以提出：
@@ -253,7 +275,7 @@ Evidence → Answer
 
 # 5. 项目目录结构
 
-当前采用 `src/financial_rag/` 包布局。以下 `src` 架构已建立，Python 文件仅包含职责说明，**没有业务实现**。根目录配套文件和数据目录按阶段补齐，不表示相应功能已经完成。
+当前采用 `src/financial_rag/` 包布局。文档处理、Embedding 和 Dense 已有实现，其他模块仍以职责占位为主。目录树是目标布局，不表示所有功能已经完成；当前执行入口为根目录 `main.py`。
 
 ```text
 financial_pdf_rag/
@@ -320,7 +342,7 @@ financial_pdf_rag/
 - `cli.py`：接收命令与参数，调用对应流程。未来 API 同样调用流程层。
 - `schemas.py` 与 `config.py`：提供公共数据契约与配置，不反向依赖业务模块。
 
-每个 Python 文件中的模块文档字符串说明其职责、输入输出和边界。初始化文件不执行模型加载、网络请求或索引任务。
+模块职责说明是设计参考，少数已实现文件顶部仍保留早期占位描述；实际状态以本文件进度表及可运行代码为准。初始化文件不执行模型加载、网络请求或索引任务。
 
 ## 5.2 数据契约
 
@@ -328,23 +350,53 @@ financial_pdf_rag/
 ParsedPage → Chunk → SearchResult → AnswerResult
 ```
 
-页面保留从 1 开始的 PDF 物理页码。Chunk 使用 `pages` 保存来源页列表，以支持跨页内容；单页显示时可取唯一页码。印刷页码单独作为可选标签。章节和标题无法提取时留空。SearchResult 保留各路分数与排名，不用融合分数覆盖原始信息。
+当前实现使用字典。页面保存 `page`、`blocks` 和 `text`；Chunk 保存 `document_id`、`chunk_id`、单页 `page`、`word_count` 和 `text`。已有附加元数据会传递，但不会自动识别 section/title。检索结果包含 chunk_id/page/score/text。
 
-后文早期示例中的 `page` 表示单页情况，实际实现以本节 `pages` 契约为准。
+当前不跨页，`page` 是从 1 开始的 PDF 物理页码，不能与印刷页码混淆。未来若支持跨页再引入 `pages`；`ParsedPage` 等类型、各路排名统一结构和 `AnswerResult` 尚未实现。
 
-## 5.3 开发顺序与当前状态
+## 5.3 当前之后的执行顺序
 
-当前仅完成源码目录与职责占位说明，解析、检索、生成和评估均未实现。
+### 1. 固定 Dense 的人工基线（当前最优先）
 
-1. 基础配置与数据结构，然后实现解析、清洗并检查结果。
-2. 分块与元数据，再建立向量检索和 BM25。
-3. RRF、重排、证据生成与引用。
-4. 完成固定评估集与方法对比。指标定义可提前确定。
-5. 动态上传、API、前端与后续扩展暂不创建实现。
+- 打开 `outputs/dense_retrieval_results.json`，逐题对照原 PDF，判断 Top-5 是否包含正确证据。
+- 给 `data/eval/dense_questions.json` 增加经过核对的标准 PDF 物理页码和简短证据说明；不要根据当前检索结果反过来认定标准答案。
+- 第 2、6 题未指定年份，标注前明确年份口径；“宣布的产品”不能直接用“当前产品清单”替代。
+- 记录命中、漏检及原因，形成可比较的 Dense 基线；不要把当前 8 题称为完整评估集。
+- 使用模型 tokenizer 检查各 chunk 的长度与实际模型输入上限，确认是否发生截断。500 词不等于 500 tokens；必要时调整分块并重新标注受影响的 chunk ID。
 
-CLI 是规划中的统一入口；后文 `python main.py` 为早期运行示意，正式实现时以已配置的 CLI 命令为准，不额外维护两套入口。
+完成标准：8 题均有人工检查记录、核对后的证据页或明确的不确定项，并确认模型是否完整编码目标文本。
 
-真实 `.env`、私密 PDF、生成索引和缓存不提交 Git。代码、配置示例和可公开的小型评估数据可以提交。依赖统一放在 `pyproject.toml`，使用 uv 管理并提交 `uv.lock` 与 `.python-version`。环境恢复运行 `uv sync --locked`，执行命令使用 `uv run`；详细步骤见 README.md。基础依赖为 PyMuPDF，开发依赖为 pytest，业务功能仍未实现。
+### 2. 实现 BM25 并与 Dense 对比
+
+- 在 `indexing/bm25_index.py` 实现分词和索引，在 `retrieval/sparse.py` 提供检索入口。
+- 使用相同 chunks 和同一组问题，分别输出两种方法的 Top-5。
+- 重点观察 Greater China、net sales、cash flow 等关键词与语义问题的区别。
+
+完成标准：同一问题可直接比较两种排序，结果能追溯到相同来源；不直接相加 BM25 和余弦分数。
+
+### 3. 实现 RRF，再接 Reranker
+
+- `retrieval/fusion.py` 按排名融合候选，按文档与 chunk 去重，保留两路排名。
+- `retrieval/retriever.py` 编排 Dense/BM25/Hybrid 模式。
+- `retrieval/reranker.py` 重排候选并保留重排前后结果。
+
+完成标准：相同问题能够比较 Dense、BM25、Hybrid、Hybrid + Reranker，并说明哪些证据排名改善或下降。
+
+### 4. 补齐可复现评估与索引存储
+
+- 逐步扩展到 30–50 道经过人工标注的问题，包括数值、语义、跨章节和负例。
+- 实现 `evaluation/dataset.py`、`metrics.py`、`benchmark.py`；明确页级/块级评估粒度，计算 Hit Rate、Recall@K 和 MRR。
+- 负例单独评估，不将空标准证据集合直接用于普通 Recall。
+- 实现索引保存/加载，保存 chunks 摘要、模型标识、编码配置与维度；配置不一致时拒绝复用。
+- 需要反复实验时，可提前做向量缓存，避免每次重新编码全部 chunks。
+
+完成标准：同一数据和配置可重复运行，并输出四种检索方法的对比表。
+
+### 5. 接入回答与引用，最后做产品化
+
+检索证据稳定后实现 `generation/`：仅依据证据回答、证据不足时明确说明、引用与 PDF 页码对应。再逐步增加动态上传、API 和前端；权限、Web3 留待后续。不要将检索页码元数据等同于已经实现最终答案引用。
+
+目前使用 `uv run main.py`，CLI 和统一 pipeline 待实现；依赖与运行方法以 README.md 为准。
 
 ---
 
@@ -965,7 +1017,7 @@ Greater China revenue
 
 ## Recall@K
 
-正确 chunk 是否出现在 Top-K。
+Top-K 中命中的标准相关证据数 / 全部标准相关证据数。须明确按页还是按 chunk 计数；“至少命中一个”属于 Hit Rate，不等于 Recall。
 
 例如：
 
@@ -1565,61 +1617,47 @@ Do not implement retrieval yet.
 
 # 32. 项目阶段 Checklist
 
+已勾选仅表示描述中的当前范围完成，不表示整个 Phase 已验收。
+
 ## Foundation
 
-- [ ] Project structure
-- [ ] Config
-- [ ] Sample financial PDF
+- [x] src 包布局、uv 环境与锁文件
+- [x] 本地 Apple 样本 PDF
+- [ ] 统一 Config、Schemas、Pipeline 和 CLI
 
 ## Document Pipeline
 
-- [ ] PDF parsing
-- [ ] Normalization
-- [ ] Chunking
-- [ ] Metadata
+- [x] 逐页文本块解析与物理页码
+- [x] 基础清洗、保守页脚/纯符号移除
+- [x] 按段落组合及长段落词数分块，保留段落空行
+- [x] ID、页码、word_count 与已有元数据传递
+- [ ] tokenizer 预算与截断检查
+- [ ] 自动章节/标题识别、结构化表格及 OCR
 
 ## Retrieval
 
-- [ ] Embedding
-- [ ] Vector index
-- [ ] Dense search
-- [ ] BM25 index
-- [ ] BM25 search
-- [ ] RRF
-- [ ] Reranker
+- [x] 本地 BGE 文档与查询编码
+- [x] NumPy Dense Top-K 检索
+- [ ] 向量索引持久化与配置兼容检查
+- [ ] BM25 索引与检索
+- [ ] RRF 融合
+- [ ] Reranker 与统一检索入口
 
-## Generation
+## Tests and Evaluation
 
-- [ ] Prompt assembly
-- [ ] LLM generation
-- [ ] Evidence-only answering
-- [ ] Page citations
+- [x] 19 项清洗/分块单元测试
+- [x] 8 题真实 Dense 流程检查与 Top-5 报告
+- [ ] 人工核对 8 题证据并固定基线
+- [ ] 30–50 题与标准证据标注
+- [ ] Recall@5、Recall@10、MRR、Hit Rate
+- [ ] BM25 / Dense / Hybrid / Rerank 对比
 
-## Evaluation
+## Generation and Productization
 
-- [ ] 30–50 questions
-- [ ] Ground-truth evidence
-- [ ] Recall@5
-- [ ] Recall@10
-- [ ] MRR
-- [ ] BM25 vs Dense vs Hybrid vs Rerank benchmark
-
-## Productization
-
-- [ ] Dynamic PDF upload
-- [ ] Document isolation
-- [ ] FastAPI
-- [ ] Frontend
-- [ ] Retrieval debug view
-
-## Advanced
-
-- [ ] Permission-aware retrieval
-- [ ] Local/private retrieval
-- [ ] On-chain data
-- [ ] Wallet login
-- [ ] Smart contract
-- [ ] dApp
+- [ ] Prompt、LLM、证据约束与拒答
+- [ ] 最终答案引用映射与验证
+- [ ] 动态上传、文档隔离、FastAPI、前端
+- [ ] 权限控制、链上数据、钱包与 dApp
 
 ---
 

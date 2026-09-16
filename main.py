@@ -3,7 +3,8 @@ from pathlib import Path
 from financial_rag.ingestion.normalizer import normalize_pages
 from financial_rag.ingestion.parser import parse_pdf, save_parsed_document
 from financial_rag.ingestion.chunker import chunk_pages
-
+from financial_rag.indexing.embeddings import EmbeddingModel
+from financial_rag.retrieval.dense import dense_search
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PDF_PATH = PROJECT_ROOT / "data" / "raw" / "apple-10k.pdf"
@@ -23,21 +24,62 @@ def main():
     )
 
     save_parsed_document(chunks, CHUNKS_PATH)
-
-    print(f"Total pages: {len(normalized_pages)}")
     print(f"Total chunks: {len(chunks)}")
-    print(f"Covered pages: {len({chunk['page'] for chunk in chunks})}")
-    print(f"Max words: {max((chunk['word_count'] for chunk in chunks), default=0)}")
-    print(f"Chunks saved to: {CHUNKS_PATH}")
+    embedding_model = EmbeddingModel()
 
-    for chunk in chunks[:5]:
+    chunk_texts = [
+        chunk["text"]
+        for chunk in chunks
+    ]
+
+    chunk_embeddings = (
+        embedding_model.encode_documents(
+            chunk_texts
+        )
+    )
+
+    print(
+        "Chunk embeddings shape:",
+        chunk_embeddings.shape
+    )
+    query = (
+        "What are Apple's major risks "
+        "in Greater China?"
+    )
+
+    query_embedding = (
+        embedding_model.encode_query(query)
+    )
+
+    # --------------------
+    # Dense Retrieval
+    # --------------------
+
+    results = dense_search(
+        query_embedding=query_embedding,
+        chunk_embeddings=chunk_embeddings,
+        chunks=chunks,
+        top_k=5,
+    )
+
+    for rank, result in enumerate(
+            results,
+            start=1,
+    ):
         print("=" * 80)
-        print("Chunk ID:", chunk["chunk_id"])
-        print("Page:", chunk["page"])
-        print("Words:", len(chunk["text"].split()))
-        print(chunk["text"][:1000])
-        print(chunk["text"])
-        print("[END OF CHUNK]")
+
+        print(f"Rank: {rank}")
+        print(
+            f"Score: {result['score']:.4f}"
+        )
+        print(
+            f"Page: {result['page']}"
+        )
+        print(
+            f"Chunk: {result['chunk_id']}"
+        )
+
+        print(result["text"][:1000])
 
 
 
