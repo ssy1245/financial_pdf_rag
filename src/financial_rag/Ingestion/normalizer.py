@@ -1,14 +1,10 @@
-"""正文清洗。
+"""块内清洗并保留块边界；保守删除重复的 10-K 页脚和纯商标符号块。
 
-状态：架构占位，尚未实现业务逻辑。
-
-职责与输入输出：
-输入：同一文档的 ParsedPage 列表。输出：清洗后的页面列表。
-利用多页重复特征识别明显页眉页脚，处理断行、空白与断词，记录必要的清洗信息。
-把“PDF 提取器吐出来的文本”变成“后续 chunker 和 retriever 能稳定使用的文本“
-边界与约束：
-保留页码、金额、负号、百分号和表格语义；避免凭重复次数删除正文。
+页脚必须整块匹配“公司 | 年份 Form 10-K | 页码”，位于最下方，
+且同一公司和年份在至少三个页面出现。缺少坐标时不删除页脚。
+不识别复杂表格，不删除正文内的商标符号或金融标点。
 """
+from collections import Counter
 import re
 
 def normalize_whitespace(text:str)->str:
@@ -54,26 +50,48 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
+
+FOOTER_PATTERN = re.compile(
+    r"(?P<label>[^|\n]+\|\s*\d{4}\s+Form\s+10-K)\s*\|\s*\d+",
+    re.IGNORECASE,
+)
+
+
+def footer_key(block: dict, blocks: list[dict]) -> str | None:
+    text = " ".join(block["text"].split())
+    match = FOOTER_PATTERN.fullmatch(text)
+    if not match or "bbox" not in block:
+        return None
+    # 使用文本块坐标判断是否位于本页最下方，不假定所有 PDF 纸张尺寸相同。
+    bottom = max((b["bbox"][3] for b in blocks if "bbox" in b), default=0)
+    if block["bbox"][3] < bottom - 2:
+        return None
+    return match["label"].casefold()
+
+
 def normalize_pages(pages: list[dict]) -> list[dict]:
+    frequencies = Counter()
+    for page in pages:
+        keys = {footer_key(block, page["blocks"]) for block in page["blocks"]}
+        frequencies.update(key for key in keys if key is not None)
+
     normalized_pages = []
     for page in pages:
         normalized_blocks = []
         for block in page["blocks"]:
-            cleaned_text = normalize_text(block["text"])
-
+            text = block["text"]
+            # 仅删整块纯商标符号；保留正文中的 ®、负号、百分号等。
+            if re.fullmatch(r"[®™\s]+", text):
+                continue
+            key = footer_key(block, page["blocks"])
+            if key is not None and frequencies[key] >= 3:
+                continue
+            cleaned_text = normalize_text(text)
             if cleaned_text:
-                normalized_blocks.append({
-                    **block,
-                    "text": cleaned_text,
-                })
+                normalized_blocks.append({**block, "text": cleaned_text})
         normalized_pages.append({
             **page,
             "blocks": normalized_blocks,
-            "text": "\n\n".join(
-                block["text"]
-                for block in normalized_blocks
-            ),
+            "text": "\n\n".join(block["text"] for block in normalized_blocks),
         })
     return normalized_pages
-
-

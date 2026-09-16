@@ -50,6 +50,19 @@ def split_long_text(
 
     return chunks
 
+def tail_paragraphs(paragraphs: list[str], word_limit: int) -> list[str]:
+    """取末尾若干词作为 overlap，同时保留这些词之间原有的段落边界。"""
+    result = []
+    remaining = word_limit
+    for paragraph in reversed(paragraphs):
+        if remaining <= 0:
+            break
+        words = paragraph.split()
+        result.append(" ".join(words[-remaining:]))
+        remaining -= min(remaining, len(words))
+    return list(reversed(result))
+
+
 def chunk_pages(
     pages: list[dict],
     document_id: str,
@@ -57,133 +70,47 @@ def chunk_pages(
     overlap: int = 80,
 ) -> list[dict]:
     validate_chunk_config(chunk_size, overlap)
-
     chunks = []
 
     for page in pages:
-        page_number = page["page"]
-
-        paragraphs = [
-            paragraph.strip()
-            for paragraph in page["text"].split("\n\n")
-            if paragraph.strip()
-        ]
-
-        current_words = []
+        metadata = {key: value for key, value in page.items() if key not in {"text", "blocks"}}
         page_chunk_index = 0
+        current_paragraphs = []
+        current_word_count = 0
 
+        def append_chunk(text: str) -> None:
+            nonlocal page_chunk_index
+            chunks.append({
+                **metadata,
+                "chunk_id": f"{document_id}_p{page['page']}_c{page_chunk_index}",
+                "document_id": document_id,
+                "word_count": count_words(text),
+                "text": text,
+            })
+            page_chunk_index += 1
+
+        paragraphs = [p.strip() for p in page["text"].split("\n\n") if p.strip()]
         for paragraph in paragraphs:
-            paragraph_words = paragraph.split()
-
-            # 情况 1：
-            # paragraph 自己就超过 chunk_size
-            if len(paragraph_words) > chunk_size:
-
-                # 先保存前面已经积累的内容
-                if current_words:
-                    chunk_text = " ".join(current_words)
-
-                    chunks.append(
-                        {
-                            **page,
-                            "chunk_id": (
-                                f"{document_id}_"
-                                f"p{page_number}_"
-                                f"c{page_chunk_index}"
-                            ),
-                            "document_id": document_id,
-                            "page": page_number,
-                            "word_count": len(current_words),
-                            "text": chunk_text,
-                        }
-                    )
-
-                    page_chunk_index += 1
-                    current_words = []
-
-                # 再单独处理这个超长 paragraph
-                long_chunks = split_long_text(
-                    paragraph,
-                    chunk_size=chunk_size,
-                    overlap=overlap,
-                )
-
-                for chunk_text in long_chunks:
-                    chunks.append(
-                        {
-                            **page,
-                            "chunk_id": (
-                                f"{document_id}_"
-                                f"p{page_number}_"
-                                f"c{page_chunk_index}"
-                            ),
-                            "document_id": document_id,
-                            "page": page_number,
-                            "word_count": len(
-                                chunk_text.split()
-                            ),
-                            "text": chunk_text,
-                        }
-                    )
-
-                    page_chunk_index += 1
-
+            paragraph_word_count = count_words(paragraph)
+            if paragraph_word_count > chunk_size:
+                if current_paragraphs:
+                    append_chunk("\n\n".join(current_paragraphs))
+                    current_paragraphs = []
+                    current_word_count = 0
+                for text in split_long_text(paragraph, chunk_size, overlap):
+                    append_chunk(text)
                 continue
 
-            # 情况 2：
-            # 当前 chunk + 新 paragraph 会超限
-            if (
-                current_words
-                and
-                len(current_words)
-                + len(paragraph_words)
-                > chunk_size
-            ):
-                chunk_text = " ".join(current_words)
+            if current_paragraphs and current_word_count + paragraph_word_count > chunk_size:
+                append_chunk("\n\n".join(current_paragraphs))
+                overlap_words = min(overlap, chunk_size - paragraph_word_count)
+                current_paragraphs = tail_paragraphs(current_paragraphs, overlap_words)
+                current_word_count = sum(count_words(p) for p in current_paragraphs)
 
-                chunks.append(
-                    {
-                        **page,
-                        "chunk_id": (
-                            f"{document_id}_"
-                            f"p{page_number}_"
-                            f"c{page_chunk_index}"
-                        ),
-                        "document_id": document_id,
-                        "page": page_number,
-                        "word_count": len(current_words),
-                        "text": chunk_text,
-                    }
-                )
+            current_paragraphs.append(paragraph)
+            current_word_count += paragraph_word_count
 
-                page_chunk_index += 1
-
-                # 给完整的新段落留出空间；实际重叠不能使新块超限。
-                overlap_words = min(overlap, chunk_size - len(paragraph_words))
-                current_words = (
-                    current_words[-overlap_words:]
-                    if overlap_words > 0
-                    else []
-                )
-
-            # 加入当前 paragraph
-            current_words.extend(paragraph_words)
-
-        # 当前页面最后剩余内容
-        if current_words:
-            chunks.append(
-                {
-                    **page,
-                    "chunk_id": (
-                        f"{document_id}_"
-                        f"p{page_number}_"
-                        f"c{page_chunk_index}"
-                    ),
-                    "document_id": document_id,
-                    "page": page_number,
-                    "word_count": len(current_words),
-                    "text": " ".join(current_words),
-                }
-            )
+        if current_paragraphs:
+            append_chunk("\n\n".join(current_paragraphs))
 
     return chunks
