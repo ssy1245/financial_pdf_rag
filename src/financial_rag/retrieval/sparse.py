@@ -9,3 +9,42 @@
 边界与约束：
 不重新建立索引，不执行融合或生成。
 """
+from financial_rag.indexing.bm25_index import BM25Index
+
+
+def bm25_search(
+    query: str,
+    index: BM25Index,
+    top_k: int = 5,
+) -> list[dict]:
+    if top_k <= 0:
+        return []
+
+    scores = index.get_scores(query)
+
+    ranked_indices = sorted(
+        range(len(scores)),
+        key=lambda i: scores[i],
+        reverse=True,
+    )
+
+    results = []
+
+    for i in ranked_indices:
+        # 当前使用正值 IDF，无词匹配时得分为 0
+        if scores[i] <= 0:
+            continue
+
+        chunk = index.chunks[i]
+
+        results.append({
+            "chunk_id": chunk["chunk_id"],
+            "page": chunk["page"],
+            "score": scores[i],
+            "text": chunk["text"],
+        })
+
+        if len(results) == top_k:
+            break
+
+    return results

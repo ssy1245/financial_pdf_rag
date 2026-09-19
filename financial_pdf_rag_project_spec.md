@@ -6,9 +6,9 @@
 
 ---
 
-## 当前进度（2026-09-16）
+## 当前进度（2026-09-19）
 
-已跑通：PDF → 文本块解析 → 清洗 → 分块 → 本地 Embedding → Dense Top-5。尚未接入 BM25、融合、重排或 LLM 回答，第一阶段 MVP 尚未完成。
+已跑通：PDF → 文本块解析 → 清洗 → 分块 → 本地 Embedding → Dense Top-5。BM25 统计、评分与 Top-K 代码已编写，但 get_scores 方法归属错误尚未修复；融合、重排与 LLM 回答未实现。
 
 | 模块 | 已完成 | 尚未完成或限制 |
 |---|---|---|
@@ -18,6 +18,7 @@
 | 分块 | 逐页按段落组合，长段落按词拆分；段落换行、元数据、word_count、稳定页内 ID | 当前 500/80 的单位是词而非 token；不跨页，不按章节识别边界 |
 | Embedding | SentenceTransformers 本地 `BAAI/bge-small-en-v1.5`，文档/查询向量归一化 | tokenizer 长度与截断检查、编码策略验证、向量缓存 |
 | Dense 检索 | NumPy 内存矩阵点积排序，返回 score/page/chunk_id/text | 持久化向量索引、索引配置兼容检查；`vector_store.py` 仍未实现 |
+| BM25 | 已编写统计、评分与 Top-K | get_scores 在类外，调用未接通；尚无 BM25 测试 |
 | 测试 | 清洗和分块 19 项；截图中的 8 题 Dense 流程测试 | 标准证据、相关性指标和正式对比实验 |
 
 最近验证：Apple PDF 共 80 页，生成 132 个 chunks，最大 500 词；清理 58 个目标页脚块、16 个纯符号块。19 项单元测试通过，8 项实际模型测试通过，保存了 8 × Top-5 检索结果。上述数字是当前样本文档的验证记录，不是固定验收阈值。
@@ -275,7 +276,7 @@ Evidence → Answer
 
 # 5. 项目目录结构
 
-当前采用 `src/financial_rag/` 包布局。文档处理、Embedding 和 Dense 已有实现，其他模块仍以职责占位为主。目录树是目标布局，不表示所有功能已经完成；当前执行入口为根目录 `main.py`。
+当前采用 `src/financial_rag/` 包布局。文档处理、Embedding 和 Dense 已有实现；BM25 已编写但调用待修复，其余模块仍以职责占位为主。目录树是目标布局，不表示所有功能已经完成；当前执行入口为根目录 `main.py`。
 
 ```text
 financial_pdf_rag/
@@ -366,9 +367,9 @@ ParsedPage → Chunk → SearchResult → AnswerResult
 
 完成标准：8 题均有人工检查记录、核对后的证据页或明确的不确定项，并确认模型是否完整编码目标文本。
 
-### 2. 实现 BM25 并与 Dense 对比
+### 2. 修复 BM25 接口并与 Dense 对比
 
-- 在 `indexing/bm25_index.py` 实现分词和索引，在 `retrieval/sparse.py` 提供检索入口。
+- 两个模块已编写基础逻辑；先将 get_scores 移入 BM25Index，再统一 main.py 的两路查询问题。补齐 BM25 单元测试，当前不具备已验证的可运行状态。
 - 使用相同 chunks 和同一组问题，分别输出两种方法的 Top-5。
 - 重点观察 Greater China、net sales、cash flow 等关键词与语义问题的区别。
 
@@ -656,6 +657,45 @@ Top-5 中是否出现明显正确证据。
 ---
 
 # 10. Phase 4 — BM25 Retrieval
+
+## BM25 实现说明与当前状态（2026-09-19）
+
+BM25 基础代码已编写，但尚未完成运行验证。`indexing/bm25_index.py` 负责文档分词、统计及评分；`retrieval/sparse.py` 负责排序、过滤零分并返回最多 K 条证据。不依赖 Embedding，也没有使用 rank_bm25 库。
+
+### 统计和公式
+
+每个 chunk 作为一篇文档，文档与查询统一使用小写化及 `[a-z0-9]+` 分词。
+
+- TF(t,d)：词 t 在当前 chunk d 中的出现次数，由每个 chunk 的 Counter 统计。
+- DF(t)：包含词 t 的 chunk 数；每个 chunk 先用 set 去重，最多贡献一次。
+- N：chunk 总数；dl：当前 chunk 的分词数量；avgdl：平均分词数量。
+- IDF 使用正值变体：`ln(1 + (N - DF + 0.5) / (DF + 0.5))`。
+- 单词贡献：`IDF * TF * (k1 + 1) / (TF + k1 * (1 - b + b * dl / avgdl))`。
+- 当前 `k1=1.5`、`b=0.75`，查询词去重后累加贡献；不匹配的词贡献为零。
+- 按总分降序取 Top-K；过滤零分，所以不足 K 个匹配时返回更少结果，无匹配返回空列表。
+
+当前分词为英文基础版：`R&D` 会拆成 r/d，`64,377` 会拆成 64/377，不支持中文分词。BM25 的分词长度与 chunker 的空白词数不同，不能混为一谈。当前索引仅保存在内存。
+
+### 当前阻塞与修复顺序
+
+1. **先把 `get_scores()` 放进 `BM25Index` 类中。** 当前它是模块级函数，但 sparse.py 调用 `index.get_scores(query)`，会触发 AttributeError。已有统计字段无需改成全局变量。
+2. **统一 main.py 的 query。** 当前 Dense 查询大中华区风险，BM25 查询大中华区收入，不能据此比较两种算法。修复后向两种检索传入同一问题，分别打印方法名、排名、分数、chunk ID、页码与证据。
+3. **补 BM25 单元测试。** 用小语料验证 TF/DF/IDF、重复查询词去重、词频饱和和长度调整、空语料、未知词、零分过滤、Top-K 排序与原文映射。
+4. **用相同 8 题做双方法对比。** 复用 `data/eval/dense_questions.json` 和同一批 chunks，保存独立 BM25 报告；该批量测试目前还未实现。
+5. 完成基础对比后再实现 RRF；两路原始分数不直接相加。
+
+### 运行状态
+
+`uv run main.py` 已加入 BM25 调用，但目前会在调用 get_scores 时失败，而且失败前仍会加载 Dense 模型并编码。修复上述方法归属后再用它验证双方法流程。
+
+已有 Dense 测试独立于 main.py，仍可按以下命令单独运行（需已有 chunks 文件）：
+
+```bash
+uv run pytest tests/test_dense_retrieval.py --run-dense -s -v
+```
+
+现有 19 项清洗/分块测试与 8 题 Dense 测试不覆盖 BM25，不能作为 BM25 已完成的依据。
+
 
 ## 目标
 
@@ -1639,7 +1679,8 @@ Do not implement retrieval yet.
 - [x] 本地 BGE 文档与查询编码
 - [x] NumPy Dense Top-K 检索
 - [ ] 向量索引持久化与配置兼容检查
-- [ ] BM25 索引与检索
+- [x] BM25 基础代码：TF/DF/IDF、评分公式与 Top-K（未完成运行验收）
+- [ ] get_scores 方法归属修复、同题调用、BM25 单元测试与 8 题对比
 - [ ] RRF 融合
 - [ ] Reranker 与统一检索入口
 

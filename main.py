@@ -5,6 +5,8 @@ from financial_rag.ingestion.parser import parse_pdf, save_parsed_document
 from financial_rag.ingestion.chunker import chunk_pages
 from financial_rag.indexing.embeddings import EmbeddingModel
 from financial_rag.retrieval.dense import dense_search
+from financial_rag.indexing.bm25_index import BM25Index
+from financial_rag.retrieval.sparse import bm25_search
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PDF_PATH = PROJECT_ROOT / "data" / "raw" / "apple-10k.pdf"
@@ -22,6 +24,7 @@ def main():
         chunk_size=500,
         overlap=80,
     )
+    bm25_index = BM25Index(chunks)
 
     save_parsed_document(chunks, CHUNKS_PATH)
     print(f"Total chunks: {len(chunks)}")
@@ -50,18 +53,32 @@ def main():
     query_embedding = (
         embedding_model.encode_query(query)
     )
+    print(f"Query: {query}")
+    print("\n===== BM25 Top-5 =====")
+    results = bm25_search(
+        query=query,
+        index=bm25_index,
+        top_k=5,
+    )
+
+    for rank, result in enumerate(results, start=1):
+        print(
+            f"Rank: {rank} | "
+            f"Score: {result['score']:.4f} | "
+            f"Page: {result['page']} | Chunk: {result['chunk_id']}"
+        )
+        print(result["text"])
 
     # --------------------
     # Dense Retrieval
     # --------------------
-
+    print("\n===== Dense Top-5 =====")
     results = dense_search(
         query_embedding=query_embedding,
         chunk_embeddings=chunk_embeddings,
         chunks=chunks,
         top_k=5,
     )
-
     for rank, result in enumerate(
             results,
             start=1,
