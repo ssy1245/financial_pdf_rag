@@ -1,3 +1,9 @@
+"""单问题 Dense/BM25 演示入口。
+
+解析 PDF、清洗、生成并保存 chunks，建立内存索引和文档向量。
+两路共用 query，打印 Top-5；Dense 仅预览前 1000 字符。
+此入口尚未展示 Hybrid；三路批量对比使用 evaluation.compare_methods。
+"""
 from pathlib import Path
 
 from financial_rag.ingestion.normalizer import normalize_pages

@@ -1,13 +1,11 @@
-"""逐页分块：优先保留段落，长段落按空白分隔的词数拆分。
+"""逐页按段落组合 chunks，保留段落空行。
 
-chunk_size 和 overlap 的单位是词，不是模型 token。
-不跨页拼接；保留页面元数据，使用文档标识、页码与页内序号生成稳定 ID。
-章节识别与基于 tokenizer 的分块留待后续实现。
-普通段落边界优先保持新段落完整，因此 overlap 是上限；长段落内部使用固定 overlap。
-独立长段落与相邻段落之间、页面之间不添加 overlap。
+已实现：长段落按空白词数拆分，校验 chunk_size/overlap，保留单页 page、
+word_count、已有元数据及确定性页内 ID；不复制整页 blocks。
+普通段落边界的 overlap 可减少以防超限，长段落内部使用固定 overlap；
+独立长段落之间和页面之间不额外重叠。
+限制：单位是词而非 token；不识别章节，不跨页，不保证模型输入不被截断。
 """
-
-
 def validate_chunk_config(chunk_size: int, overlap: int) -> None:
     if chunk_size <= 0:
         raise ValueError("chunk_size 必须大于 0")

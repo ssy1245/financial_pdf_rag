@@ -1,15 +1,9 @@
-"""向量编码适配。
+"""本地 SentenceTransformers 编码适配。
 
-状态：架构占位，尚未实现业务逻辑。
-
-职责与输入输出：
-输入：文档文本批次或查询。输出：对应向量。
-封装可替换的 API 或本地模型，明确文档编码与查询编码的差异、模型版本和维度。
-
-边界与约束：
-不管理索引或排序；查询与文档必须使用兼容的编码配置，不能静默混用模型。
+已实现：默认 BAAI/bge-small-en-v1.5；文档批次和单条查询返回归一化 NumPy 向量。
+首次加载可能下载模型。文档与查询均使用同一模型的 encode。
+未实现：向量缓存、tokenizer 超长输入检查、模型版本固定和额外查询指令策略。
 """
-
 from sentence_transformers import SentenceTransformer
 import numpy as np
 

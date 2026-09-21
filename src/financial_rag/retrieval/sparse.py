@@ -1,13 +1,9 @@
-"""BM25 检索。
+"""BM25 Top-K 检索。
 
-状态：架构占位，尚未实现业务逻辑。
-
-职责与输入输出：
-输入：问题、top_k 和文档范围。输出：统一 SearchResult 列表。
-调用 BM25 索引，恢复 chunk 正文及元数据，记录 bm25_rank 与 bm25_score。
-
-边界与约束：
-不重新建立索引，不执行融合或生成。
+输入：查询文本、已建立的 BM25Index 和 top_k。
+调用实例 get_scores，按分数降序返回 chunk_id/page/score/text；
+过滤零分，允许结果少于 K 条，top_k<=0 返回空列表。
+不重建索引，不执行融合、文档权限过滤或回答生成。
 """
 from financial_rag.indexing.bm25_index import BM25Index
 

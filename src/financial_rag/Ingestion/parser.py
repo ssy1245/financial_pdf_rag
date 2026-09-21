@@ -1,14 +1,8 @@
-"""PDF 解析。
+"""PDF 文本块解析与 JSON 保存。
 
-状态：已实现基础逐页文本提取与 JSON 保存；布局提取和扫描页识别待实现。
-
-职责与输入输出：
-当前输入：PDF 路径。输出：包含 page 和 text 的字典列表。
-后续再接入 document_id 与 ParsedPage 数据结构。
-提取逐页文字，保留页边界；可用时保留布局、标题和表格信息。
-
-边界与约束：
-不清洗、不分块、不调用模型。扫描页或无法解析的页面应报告，不把空内容当作成功解析。
+已实现：PyMuPDF blocks + sort=True，返回 page/blocks/text；块包含 block_id/bbox/text。
+页码从 1 开始，表示 PDF 物理页码；保存函数会创建父目录。
+未实现：OCR、可靠的多栏顺序、表格结构和标题识别；无文字页可能返回空文本。
 """
 from pathlib import Path
 import json
