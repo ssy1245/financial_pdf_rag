@@ -229,7 +229,7 @@ uv run --env-file .env python -m financial_rag.pipeline \
 ### PDF 拖拽上传与网页问答
 
 ```bash
-uv run --env-file .env streamlit run app.py --server.address 127.0.0.1 --server.maxUploadSize 20
+uv run --env-file .env streamlit run streamlit_app.py --server.address 127.0.0.1 --server.maxUploadSize 20
 ```
 
 打开终端显示的本地地址，拖入 PDF → 点击「开始阅读」→ 输入问题。
@@ -239,3 +239,15 @@ uv run --env-file .env streamlit run app.py --server.address 127.0.0.1 --server.
 最多上传 20 MB，扫描件无 OCR；当前 embedding 更适合英文文档。
 历史仅展示，每题独立检索；提问时相关文档片段会发送给 DeepSeek。
 这是本地单机界面，尚未实现账户、公共部署或多用户并发优化。
+
+
+### HTML 多 PDF 网页（推荐）
+
+运行 `uv run app.py`，打开 http://127.0.0.1:8000；macOS 也可双击 `start.command`。
+自动从项目 `.env` 读取 DeepSeek 密钥。前端为 `templates/index.html` 和
+`static/style.css`、`static/app.js`，无需 Node 构建；HTML 必须通过 Python 服务打开。
+一次选择或拖入 1–10 份 PDF，每份最多 20 MB，合计 100 MB，点击开始阅读后统一索引。
+同内容自动去重，引用展示文件名与 PDF 页码。新一批成功入库才替换旧资料库；失败保留旧数据。
+资料库按浏览器会话隔离，临时存储，服务重启后需重新上传；清空会删除当前临时索引。
+当前跨文档使用全局 Top 5 证据，不保证每份文件都有证据；比较问题请明确文件和指标。
+旧版 Streamlit 保留在 `streamlit_app.py`。当前是本地开发服务，不面向公开部署。

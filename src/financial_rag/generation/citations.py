@@ -21,7 +21,7 @@ def prepare_evidence(results, chunks_by_id):
 
         evidence_blocks.append(
             f"[{label}]\n"
-            f"Document: {chunk['document_id']}\n"
+            f"Document: {chunk.get('title', chunk['document_id'])}\n"
             f"PDF page: {chunk['page']}\n"
             f"Text:\n{chunk['text']}"
         )
