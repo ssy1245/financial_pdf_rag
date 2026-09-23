@@ -2,9 +2,9 @@
 
 面向金融 PDF 的可评估检索学习项目。长期目标见 [项目规格说明](financial_pdf_rag_project_spec.md)；当前实现状态以本 README 为准。
 
-## 当前进度（2026-09-21）
+## 当前进度（2026-09-23）
 
-已跑通 PDF → 文本块解析 → 清洗 → 分块 → Dense / BM25 → RRF Hybrid，并完成同一组 8 题的三路对比。尚未实现 Reranker、LLM 回答或正式相关性指标，MVP 尚未完成。
+已跑通 PDF → 文本块解析 → 清洗 → 分块 → Dense / BM25 → RRF Hybrid，并完成同一组 8 题的三路对比。已接入 Cross-Encoder Reranker；尚未实现 LLM 回答或正式相关性指标，MVP 尚未完成。
 
 | 模块 | 当前实现 | 限制 |
 |---|---|---|
@@ -17,7 +17,7 @@
 | fusion | 按 chunk_id 累加 RRF，保留两路排名 | 假设各路 ID 唯一；同分按插入顺序；未做独立防御校验 |
 | compare_methods | 8 题 Dense/BM25/Hybrid 对比、完整候选及 JSON 报告 | 无标准证据标注，不计算 Recall/MRR |
 
-config、schemas、pipeline、统一 cli、vector_store、retriever、reranker、generation 和正式 evaluation 指标模块仍为规划占位。源码文件顶部已区分当前行为与规划职责。
+config、pipeline、统一 cli、vector_store、retriever、generation 和正式 evaluation 指标模块仍为规划占位。源码文件顶部已区分当前行为与规划职责。
 
 ## 环境和运行
 
@@ -99,7 +99,7 @@ uv run pytest -q
 uv run pytest tests/test_dense_retrieval.py --run-dense -s -v
 ```
 
-最近普通测试为 **23 passed、8 skipped**；此前 Dense 8 题实际模型测试通过，最新三路批量运行也已成功。模型测试跳过不表示失败，需显式启用。已逐项核对 Hybrid 报告中两路排名与 RRF 分数；不等同于完成相关性评估。
+最近普通测试为 **25 passed、8 skipped**；此前 Dense 8 题实际模型测试通过，最新三路批量运行也已成功。模型测试跳过不表示失败，需显式启用。已逐项核对 Hybrid 报告中两路排名与 RRF 分数；不等同于完成相关性评估。
 
 - test_normalizer.py / test_chunker.py：清洗、分块及边界情况。
 - test_bm25.py：实例评分与搜索基础回归。
@@ -110,7 +110,7 @@ uv run pytest tests/test_dense_retrieval.py --run-dense -s -v
 
 ## 数据和评分约定
 
-- 以字典传递数据，page 从 1 开始；PDF 物理页码和报告印刷页码可能不同。
+- schemas.py 已用 TypedDict 描述当前字典结构（不做运行时校验）；现有模块尚未全部接入类型注解。page 从 1 开始；PDF 物理页码和报告印刷页码可能不同。
 - chunk_id 在当前文档范围内唯一，包含文档标识、页码和页内序号；重分块后 ID 可能变化。
 - chunk_size=500、overlap=80 按空白词数计量。普通段落 overlap 可减少以维持上限；独立长段落与页边界不额外重叠。
 - BM25 文档与查询统一小写并使用 `[a-z0-9]+` 分词；R&D、64,377 会拆开，不支持中文分词。TF 是块内出现次数，DF 是包含该词的 chunk 数。
@@ -122,7 +122,7 @@ uv run pytest tests/test_dense_retrieval.py --run-dense -s -v
 
 1. **固定当前三路基线并补标准标注。** 对照原 PDF 核对 8 题的证据页，明确大中华区营收、经营现金流问题的年份；记录目录误召回和混合主题块。不要只凭检索结果自动生成标准答案。
 2. **验证 Embedding 长度与 RRF 边界。** 用 tokenizer 检查实际输入上限；500 词不是 500 tokens。补 RRF 单路缺席、空列表、重复 ID、非法参数与同分处理测试。若调整分块或问题，三路全部重跑。
-3. **实现 Reranker。** 将 RRF 融合后的候选保留约 20 条，再以“问题 + 候选正文”重排并取 5 条，比较 Hybrid 与 Hybrid + Reranker；不要只给重排器现有最终 Top-5。重点验证目录页是否下降、直接证据是否上升。
+3. **改进并验证已接入的 Reranker。** 将 RRF 融合后的候选保留约 20 条，再以“问题 + 候选正文”重排并取 5 条，比较 Hybrid 与 Hybrid + Reranker；不要只给重排器现有最终 Top-5。重点验证目录页是否下降、直接证据是否上升。
 4. **完善评估和存储。** 扩展到 30–50 道标注题，实现页级或块级 Hit Rate/Recall@K/MRR，负例单独处理；保存索引/向量缓存与兼容性信息。
 5. **再接回答与引用。** 仅依据证据回答并支持证据不足说明，之后再做上传、API、前端与后续权限/Web3 扩展。
 
@@ -139,3 +139,88 @@ uv remove <package-name>
 ```
 
 依赖变化时一并提交 pyproject.toml 和 uv.lock。
+
+## Reranker 接入（2026-09-23）
+
+默认批量命令现已执行四路对比：
+
+```bash
+uv run python -m financial_rag.evaluation.compare_methods
+```
+
+每路召回 20 条，RRF 保留 20 条供 Cross-Encoder 重排，最终输出 5 条。模型为 cross-encoder/ms-marco-MiniLM-L6-v2，循环外加载一次。新报告为 outputs/dense_bm25_hybrid_reranked_comparison.json，不覆盖旧三路基线。
+
+用 --skip-reranker 可回到三路；--reranker-model 可更换模型。当前默认文本对上限为 512 tokens，超限会警告并在每题 reranker_truncated_chunk_ids 中记录。报告正文为原始全文，模型输入可能被截断，重排效果需结合这一限制判断。尚未实现长文本分窗；分数不表示正确概率。
+
+## 四路报告人工检查（2026-09-23）
+
+已检查 `outputs/dense_bm25_hybrid_reranked_comparison.json`：8 题、每题 RRF 候选 20 条、重排后 5 条。此次模型为 cross-encoder/ms-marco-MiniLM-L6-v2，文本对上限 512 tokens。以下描述是当前样本的人工观察，不是正式准确率。
+
+| 问题 | 重排后观察 |
+|---|---|
+| 总营收 | 第 32 页利润表升至第一，仍有直接数值证据 |
+| 大中华区营收 | 第一名仍为第 39 页产品收入；第 51 页直接数值证据从 Hybrid 第二降至第五，未改善 |
+| 大中华区收入变化原因 | 第 25 页仍为第一，但该候选超限；不能据返回全文断言模型看到了末尾原因说明 |
+| 供应链风险 | 第 9 页灾害/生产中断仍第一，外包风险第 11 页从第二降至第三 |
+| 网络安全风险 | 治理说明仍第一、目录仍第二；第 15 页具体风险从 Hybrid 第五掉出 Top-5，出现退步 |
+| 经营现金流 | 第 36 页仍第一；该文本对超限，需要检查关键行是否处于模型保留范围 |
+| 财年产品发布 | 第 24 页仍第一；后续混入利润表和目录，噪声未完全消除 |
+| 竞争风险 | 第 6 页直接竞争因素从 Hybrid 第五升至第一，但它也被标为超限 |
+
+每题超限候选数依次为 11、10、12、16、9、13、9、11，总计 **91/160 次问题—候选配对**（不是 91 个不同 chunks）。截断可能影响排序，但当前报告不能证明它是所有退步的原因。rerank_score 出现负数是允许的，不能套用 BM25 的“零分过滤”，也不能把分数直接视为回答置信度。
+
+### 当前优先事项
+
+1. 保留当前四路报告作为基线，不因个别题改善就判定重排整体有效。
+2. 优先核对第 25 页和其他长候选的 token 截断位置，再选择按 token 分块或对长候选分窗评分；不要只把 max_length 调到超过模型支持范围。
+3. 给 8 题补标准证据，并明确未指定年份的问题口径；单独标记目录/业务介绍等弱证据。
+4. 修改长度策略后重新运行全部四路，再比较直接证据排名与噪声；之后才考虑模型替换和 LLM 回答。
+
+### schemas.py 的当前契约
+
+已定义 TextBlock、ParsedPage、Chunk、SearchResult、FusionResult、RerankedResult，以及带展示 rank 的结果类型、QueryComparison、ComparisonReport 和配置类型。
+
+- 单路分数为 score，融合为 rrf_score，重排为 rerank_score。
+- dense_rank/bm25_rank 是候选排名，缺席为 null；rank 是当前方法输出排名。
+- candidates.rrf 是实际重排输入；reranked 是最终输出。
+- reranker_truncated_chunk_ids 是每题超限候选列表，不只包含最终结果。JSON 中保存的是原始全文，不是截断后的模型输入。
+- TypedDict 只描述字段，不做自动转换或运行时校验；AnswerResult、跨页 pages 尚未实现。
+
+
+### SQLite 索引执行入口
+
+`index_demo.py` 将现有 chunks 的向量持久化到 `storage/vectors.sqlite3`。
+SQLite 负责保存，Dense 仍使用 NumPy 计算相似度；BM25 从同一批 chunks 建立内存索引。
+
+```bash
+# 首次入库：仅在这里编码全部文档，并验证保存/加载结果一致
+uv run index_demo.py build
+
+# 查询：加载已保存向量，仅编码当前问题
+uv run index_demo.py search "What were Apple's total net sales in 2025?"
+
+# chunks 或 embedding 模型改变后整批重建（替换该数据库全部旧记录）
+uv run index_demo.py build --replace
+```
+
+两个命令均支持 `--db` 和 `--model`，查询模型必须与入库模型相同。
+该入口目前输出 Dense/BM25 结果，未接 RRF、重排和生成；`generate_demo.py`
+仍从保存的重排报告生成回答。下一步在 pipeline 中整合实时检索与生成。
+
+
+### 实时完整问答 Pipeline
+
+`FinancialRAG` 复用 SQLite 文档向量和 BM25 索引，每个问题执行 Dense/BM25
+各 Top 20 → RRF Top 20 → BGE 重排 Top 5 → DeepSeek → 引用编号检查。
+它直接检索当前问题，不读取之前的重排报告。文档入库仍使用 `index_demo.py build`。
+
+```bash
+uv run --env-file .env python -m financial_rag.pipeline \
+  "What were Apple's total net sales in 2025?" \
+  --output outputs/pipeline_answer.json
+```
+
+默认重排使用 `BAAI/bge-reranker-v2-m3`、2048 tokens，生成使用 `deepseek-flash`。
+终端展示答案与引用，`--output` 保存所有阶段候选和配置。未知引用会标记并使命令失败；
+无引用会提示人工检查。编号有效不代表事实获得证据支持，尚未实现语义事实核验。
+该流程依赖已建立的 SQLite 索引；未实现增量入库、交互会话或问答标准指标评估。

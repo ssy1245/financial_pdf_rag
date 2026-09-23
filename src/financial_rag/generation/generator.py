@@ -1,11 +1,37 @@
-"""回答生成。
+"""调用 DeepSeek，根据已经组装好的消息生成回答。"""
 
-状态：架构占位，尚未实现业务逻辑。
+import os
 
-规划职责与输入输出（尚未实现）：
-输入：组装后的消息及模型配置。输出：回答文本与必要的调用信息。
-封装模型调用、超时和错误处理，支持替换模型提供方。
+from openai import OpenAI
 
-边界与约束：
-不检索、不决定文档权限；不能把模型自身知识冒充文档证据。
-"""
+
+class DeepSeekGenerator:
+    def __init__(self, model="deepseek-flash"):
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise ValueError("未设置环境变量 DEEPSEEK_API_KEY")
+
+        self.model = model
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com",
+            timeout=60.0,
+            max_retries=2,
+        )
+
+    def generate(self, messages):
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=False,
+        )
+
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            raise RuntimeError("回答因长度限制被截断，请调整输出限制")
+
+        answer = choice.message.content
+        if not answer or not answer.strip():
+            raise RuntimeError("DeepSeek 未返回有效回答")
+
+        return answer.strip()
