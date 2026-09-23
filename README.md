@@ -224,3 +224,18 @@ uv run --env-file .env python -m financial_rag.pipeline \
 终端展示答案与引用，`--output` 保存所有阶段候选和配置。未知引用会标记并使命令失败；
 无引用会提示人工检查。编号有效不代表事实获得证据支持，尚未实现语义事实核验。
 该流程依赖已建立的 SQLite 索引；未实现增量入库、交互会话或问答标准指标评估。
+
+
+### PDF 拖拽上传与网页问答
+
+```bash
+uv run --env-file .env streamlit run app.py --server.address 127.0.0.1 --server.maxUploadSize 20
+```
+
+打开终端显示的本地地址，拖入 PDF → 点击「开始阅读」→ 输入问题。
+网页复用 FinancialRAG，支持回答历史、引用页码和展开原文。每个浏览器会话使用
+独立的临时 SQLite 索引；替换/移除文件时清除旧索引及问答，不覆盖 storage 中的索引。
+模型共享加载并串行执行；首次启动可能需要下载模型。密钥只从服务端环境变量读取。
+最多上传 20 MB，扫描件无 OCR；当前 embedding 更适合英文文档。
+历史仅展示，每题独立检索；提问时相关文档片段会发送给 DeepSeek。
+这是本地单机界面，尚未实现账户、公共部署或多用户并发优化。

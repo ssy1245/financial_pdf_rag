@@ -10,6 +10,7 @@ dependencies = [
     "openai>=3.19.0",
     "pymupdf>=1.28.2",
     "sentence-transformers>=6.0.1",
+    "streamlit>=1.64.0",
 ]
 
 [build-system]
