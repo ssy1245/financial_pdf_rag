@@ -7,60 +7,42 @@ import argparse
 import json
 from pathlib import Path
 
-import numpy as np
-
-from financial_rag.indexing.bm25_index import BM25Index
+from financial_rag.retrieval.retriever import Retriever
 from financial_rag.indexing.vector_store import VectorStore
-from financial_rag.retrieval.dense import dense_search
-from financial_rag.retrieval.sparse import bm25_search
-from financial_rag.retrieval.fusion import reciprocal_rank_fusion
-from financial_rag.generation.citations import prepare_evidence, check_citations
+from financial_rag.generation.citations import check_citations
+from financial_rag.memory import EvidenceMemory
 from financial_rag.generation.prompt import build_messages
 
 
 class FinancialRAG:
     def __init__(self, store, embedding_model, embedding_model_name,
                  reranker, generator, candidate_k=20, top_k=5, rrf_k=60):
-        if top_k <= 0 or candidate_k < top_k or rrf_k < 0:
-            raise ValueError("要求 candidate_k >= top_k > 0，rrf_k >= 0")
-        self.chunks, self.vectors = store.load(embedding_model_name)
-        self.chunks_by_id = {c["chunk_id"]: c for c in self.chunks}
-        if len(self.chunks_by_id) != len(self.chunks):
-            raise ValueError("chunk_id 必须唯一")
-        self.bm25 = BM25Index(self.chunks)
-        self.embedding_model = embedding_model
-        self.reranker = reranker
+        self.retriever = Retriever(
+            store, embedding_model, embedding_model_name, reranker,
+            candidate_k=candidate_k, top_k=top_k, rrf_k=rrf_k,
+        )
+        self.chunks_by_id = self.retriever.chunks_by_id
         self.generator = generator
-        self.candidate_k = candidate_k
-        self.top_k = top_k
-        self.rrf_k = rrf_k
 
-    def retrieve(self, question):
-        """返回各阶段候选，方便区分召回和重排的问题。"""
-        if not isinstance(question, str) or not question.strip():
-            raise ValueError("问题不能为空")
-        query_vector = np.asarray(self.embedding_model.encode_query(question))
-        if query_vector.shape != (self.vectors.shape[1],):
-            raise ValueError("查询向量维度与索引不一致")
-        if not np.isfinite(query_vector).all() or not np.isclose(
-            np.linalg.norm(query_vector), 1.0, atol=1e-4
-        ):
-            raise ValueError("查询向量必须有限且已经归一化")
-        dense = dense_search(query_vector, self.vectors, self.chunks, self.candidate_k)
-        bm25 = bm25_search(question, self.bm25, self.candidate_k)
-        hybrid = reciprocal_rank_fusion(dense, bm25, k=self.rrf_k, top_k=self.candidate_k)
-        reranked = self.reranker.rerank(question, hybrid, top_k=self.top_k)
-        return {
-            "dense": dense, "bm25": bm25, "hybrid": hybrid,
-            "reranked": reranked,
-            "reranker_truncated_chunk_ids": list(self.reranker.last_truncated_chunk_ids),
-        }
+    def retrieve(self, question, *, top_k=None, exclude_chunk_ids=None):
+        """兼容原检索入口，并允许按次排除已经获取的证据。"""
+        return self.retriever.retrieve(
+            question, top_k=top_k, exclude_chunk_ids=exclude_chunk_ids,
+        )
+
+    def ask_agent(self, question, **budgets):
+        """启用模型自主补充检索；原 ask() 仍为固定单轮基线。"""
+        from financial_rag.agent.loop import run_agent
+        budgets.setdefault("use_query_planning", True)
+        return run_agent(question, self.retriever, self.generator, **budgets)
 
     def ask(self, question):
-        retrieval = self.retrieve(question)
+        memory = EvidenceMemory()
+        retrieval = self.retrieve(question, exclude_chunk_ids=memory.chunk_ids)
         if not retrieval["reranked"]:
             raise ValueError("没有可用于生成的证据")
-        context, citation_map = prepare_evidence(retrieval["reranked"], self.chunks_by_id)
+        memory.record_search(question, retrieval["reranked"], self.chunks_by_id)
+        context, citation_map = memory.build_context(), memory.citation_map
         answer = self.generator.generate(build_messages(question, context))
         citations = check_citations(answer, citation_map)
         # 未知引用保留在报告中并明确标记，不静默修复，也不声称验证事实。
@@ -70,12 +52,14 @@ class FinancialRAG:
             "question": question, "answer": answer,
             **citations, "citation_status": status,
             "citation_map": citation_map, "retrieval": retrieval,
+            "search_history": memory.search_history,
         }
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("question")
+    parser.add_argument("--agent", action="store_true", help="启用自主补充检索")
     parser.add_argument("--db", type=Path, default=Path(__file__).resolve().parents[2] / "storage/vectors.sqlite3")
     parser.add_argument("--embedding-model", default="BAAI/bge-small-en-v1.5")
     parser.add_argument("--reranker-model", default="BAAI/bge-reranker-v2-m3")
@@ -102,7 +86,7 @@ def main():
         generator=generator, candidate_k=args.candidate_k,
         top_k=args.top_k, rrf_k=args.rrf_k,
     )
-    result = rag.ask(args.question)
+    result = rag.ask_agent(args.question) if args.agent else rag.ask(args.question)
     result["config"] = {
         "embedding_model": args.embedding_model, "reranker_model": args.reranker_model,
         "reranker_max_length": args.reranker_max_length, "generation_model": args.model,
@@ -112,6 +96,8 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(result["answer"])
+    if args.agent and result["status"] != "completed":
+        print(f"Agent 状态：{result['status']}；停止原因：{result['stop_reason']}")
     print("\n引用来源：")
     for source in result["sources"]:
         print(f"[{source['label']}] {source['document_id']} | PDF 第 {source['page']} 页 | {source['chunk_id']}")

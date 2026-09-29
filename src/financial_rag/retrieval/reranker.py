@@ -14,6 +14,7 @@ class Reranker:
         self,
         model_name: str = "cross-encoder/ms-marco-MiniLM-L6-v2",
         max_length: int = 512,
+        *, model_path: str | None = None, local_files_only: bool = False,
     ):
         if max_length <= 0:
             raise ValueError("max_length 必须大于 0")
@@ -22,8 +23,9 @@ class Reranker:
         self.last_truncated_chunk_ids = []
         # 初始化时加载一次模型，不要每个问题都重新加载
         self.model = CrossEncoder(
-            model_name,
+            model_path or model_name,
             max_length=max_length,
+            local_files_only=local_files_only,
         )
 
     def rerank(

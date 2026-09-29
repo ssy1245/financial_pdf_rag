@@ -1,7 +1,7 @@
 """本地 SentenceTransformers 编码适配。
 
 已实现：默认 BAAI/bge-small-en-v1.5；文档批次和单条查询返回归一化 NumPy 向量。
-首次加载可能下载模型。文档与查询均使用同一模型的 encode。
+可指定 model_path 和 local_files_only 从项目目录离线加载。文档与查询均使用同一模型的 encode。
 未实现：向量缓存、tokenizer 超长输入检查、模型版本固定和额外查询指令策略。
 """
 from sentence_transformers import SentenceTransformer
@@ -12,8 +12,9 @@ class EmbeddingModel:
     def __init__(
         self,
         model_name: str = "BAAI/bge-small-en-v1.5",
+        *, model_path: str | None = None, local_files_only: bool = False,
     ):
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_path or model_name, local_files_only=local_files_only)
 
     def encode_documents(
         self,

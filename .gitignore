@@ -24,3 +24,6 @@ data/parsed/
 data/chunks/
 storage/
 outputs/
+
+# Project-local model weights
+models/

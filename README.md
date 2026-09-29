@@ -1,253 +1,310 @@
 # Financial PDF RAG
 
-面向金融 PDF 的可评估检索学习项目。长期目标见 [项目规格说明](financial_pdf_rag_project_spec.md)；当前实现状态以本 README 为准。
+面向财报的 RAG 学习项目，当前已完成多 PDF 上传、检索、重排、DeepSeek 生成与引用展示。
+检索层已拆为独立 Retriever，支持按 chunk_id 排除已获取片段。
+已实现请求内证据记忆、search_documents 工具和显式 Agent loop；ask_agent() 可由模型选择补充检索。
+默认 ask() 保留单轮基线；网页已使用带查询规划的 ask_agent()。
 
-## 当前进度（2026-09-23）
-
-已跑通 PDF → 文本块解析 → 清洗 → 分块 → Dense / BM25 → RRF Hybrid，并完成同一组 8 题的三路对比。已接入 Cross-Encoder Reranker；尚未实现 LLM 回答或正式相关性指标，MVP 尚未完成。
-
-| 模块 | 当前实现 | 限制 |
-|---|---|---|
-| parser | PyMuPDF 文本块、bbox、块 ID、物理页码和 JSON 保存 | 无 OCR、结构化表格或可靠的复杂多栏处理 |
-| normalizer | 块内清洗、块间空行、保守移除重复底部 10-K 页脚与纯商标符号块 | 不自动识别标题或恢复表格关系 |
-| chunker | 段落组合、长段落切分、元数据与段落边界保留 | 按词数而非 token 计量；不跨页 |
-| embeddings | 本地 BAAI/bge-small-en-v1.5，归一化 NumPy 向量 | 无缓存；tokenizer 截断尚未核对 |
-| dense | 内存矩阵点积 Top-K | 无持久化向量索引 |
-| bm25_index / sparse | TF/DF/IDF、长度调整、正分 Top-K | 基础英文分词，无持久化 |
-| fusion | 按 chunk_id 累加 RRF，保留两路排名 | 假设各路 ID 唯一；同分按插入顺序；未做独立防御校验 |
-| compare_methods | 8 题 Dense/BM25/Hybrid 对比、完整候选及 JSON 报告 | 无标准证据标注，不计算 Recall/MRR |
-
-config、pipeline、统一 cli、vector_store、retriever、generation 和正式 evaluation 指标模块仍为规划占位。源码文件顶部已区分当前行为与规划职责。
-
-## 环境和运行
-
-使用 uv 管理环境，开发 Python 版本由 `.python-version` 固定为 3.11。
+## 快速启动
 
 ```bash
 uv sync --locked
+uv run prepare_models.py  # 从已有缓存复制；首次无缓存时加 --download
+uv run app.py
 ```
 
-PyCharm 解释器选择项目 `.venv/bin/python`。核心依赖为 PyMuPDF、NumPy、SentenceTransformers；pytest 用于测试。LangChain 虽已声明，当前检索流程为显式实现。
+浏览器打开 http://127.0.0.1:8000，也可在 macOS 双击 `start.command`。
+在项目 `.env` 设置 `DEEPSEEK_API_KEY`；Flask 入口自动加载，密钥只在后端使用。
+拖入/多选 PDF（可分次添加，待上传列表支持移除）→ 开始阅读 → 输入问题 → 展开文件名、PDF 页码和引用原文。
+前端是 HTML/CSS/JavaScript，不需要 Node 构建，但必须启动 Python 后端，不能仅双击 HTML。
 
-将 PDF 放在 `data/raw/apple-10k.pdf`，运行：
+- 资料库累计最多 10 份，每份 20 MB，总计 100 MB；跨批次同内容按哈希去重。重复上传不新增文档，清空按钮才会移除已有资料库。
+- 多份文档共用当前会话的索引；新上传文档追加到旧资料库，复用已有向量；全部处理成功后切换索引，失败保留旧数据。
+- 索引临时保存，服务重启需重新上传；不同浏览器会话隔离，模型共享并串行执行。
+- 历史问答仅展示，每题独立检索；不会自动理解“它”“刚才那个”等历史指代。
+- 相关证据片段与问题会发送给 DeepSeek。扫描件无 OCR，当前检索更适合英文。
+- 当前全局 Top 5 不保证每份 PDF 都有证据，跨文档比较需要后续专门评估。
+
+## 当前实现与文件职责
+
+| 文件/模块 | 已实现 | 主要限制 |
+|---|---|---|
+| ingestion/parser.py | PyMuPDF 文本块、坐标、物理页码 | 无 OCR、可靠表格结构恢复 |
+| ingestion/normalizer.py | 块内清洗、保留段落、保守移除重复页脚 | 不恢复复杂版式 |
+| ingestion/chunker.py | 段落分块、长段切分，500 词/80 词重叠 | 按词而非 token，不跨页 |
+| indexing/embeddings.py | BAAI/bge-small-en-v1.5，归一化向量 | 长输入截断尚待评估 |
+| indexing/vector_store.py | SQLite 保存/加载 chunks、float32 向量与模型配置 | 整批替换，无增量更新 |
+| retrieval/dense.py | NumPy 点积检索 | SQLite 仅存储，查询仍在内存完成 |
+| indexing/bm25_index.py、retrieval/sparse.py | TF/DF/IDF、BM25 和正分 Top K | 基础英文分词，内存索引 |
+| retrieval/fusion.py | RRF，保留两路排名 | 不保证融合优于单路 |
+| retrieval/reranker.py | CrossEncoder，记录输入截断 | 无分窗，分数不代表正确率 |
+| memory/evidence.py | 请求内证据累积、去重、稳定编号、查询历史和上下文组装 | 仅内存，不持久化；无自动上下文预算 |
+| generation/citations.py | 证据编号、来源映射、未知编号检查 | 不核验事实是否被证据支持 |
+| generation/prompt.py、generator.py | 基于证据的提示词与 DeepSeek API | 支持 generate_turn 工具调用适配 |
+| pipeline.py | FinancialRAG.retrieve/ask，实时完整单轮问答 | 检索委托给独立 Retriever；另有 ask_agent() 多轮入口 |
+| retrieval/retriever.py | Dense/BM25 → RRF → 重排，支持 exclude_chunk_ids 和按次 top_k | 按 ID 去重，不做语义去重；不保存请求记忆 |
+| app.py | Flask 多 PDF 会话、统一入库和问答 API | 本地开发服务，无登录和公共部署 |
+| templates/index.html、static/ | 多 PDF、实时进度、流式回答、耗时与逐轮证据展示 | 历史问答仅展示，未传回模型 |
+| schemas.py | 当前数据契约与明确标为 Draft 的未来契约 | TypedDict 不做运行时校验 |
+
+当前网页与 pipeline 使用 BGE reranker v2-m3、2048 tokens；生成默认 deepseek-flash。
+Reranker 类及批量对比入口仍默认 MiniLM、512 tokens，不要混淆入口的默认配置。
+统一 CLI、config、正式评估指标等占位模块尚未全面实现。
+
+## 已跑通的两条流程
+
+```text
+入库（仅新增/替换文档时）：
+PDF → 解析 → 清洗 → 分块 → 文档向量 → SQLite
+
+问答（每个问题）：
+加载/复用索引 → 问题向量 → Dense 20 + BM25 20
+→ RRF 20 → Reranker 5 → 证据编号 → 提示词 → DeepSeek → 引用检查
+```
+
+同一 FinancialRAG 实例复用文档向量、BM25 与模型，不重复编码全文。
+SQLite 保存的是数据；相似度仍由 NumPy 算，尚未接向量扩展或独立向量数据库。
+查询必须使用与索引一致的 embedding 模型，即使不同模型维度相同也不能混用。
+
+## 运行入口
 
 ```bash
+# 旧的解析/分块/Dense/BM25 学习演示，会重新编码文档
 uv run main.py
-```
 
-main.py 重新解析、清洗、分块、编码文档，然后用同一个 query 打印 BM25 和 Dense Top-5。它不展示 Hybrid，也不是交互式问答；BM25 打印完整正文，Dense 仅预览前 1000 字符。首次加载模型可能下载文件，后续推理在本地进行。
-
-输出：
-
-- `data/parsed/apple-10k_normalized.json`：清洗后的页面和文本块。
-- `data/chunks/apple-10k_chunks.json`：供后续检索使用的 chunks。
-
-## 8 题三路批量对比
-
-```bash
-uv run python -m financial_rag.evaluation.compare_methods --candidate-k 20 --top-k 5 --rrf-k 60
-```
-
-读取既有 chunks 和 `data/eval/dense_questions.json`。文档向量只编码一次，BM25Index 只建立一次；随后逐题召回、融合，打印三路完整证据。
-
-| 参数 | 含义 |
-|---|---|
-| `--candidate-k 20` | Dense/BM25 各自最多召回 20 条，全部参与融合 |
-| `--top-k 5` | 每种方法最终展示 5 条；BM25 正分匹配不足时允许更少 |
-| `--rrf-k 60` | 排名平滑常数，不是返回数量 |
-| `--output` | 自定义报告路径；默认报告重复运行时会更新 |
-
-要求 candidate-k >= top-k > 0，rrf-k >= 0。可用 --chunks、--questions、--model 替换输入或模型。
-
-新报告为 `outputs/dense_bm25_hybrid_comparison.json`，保留旧的 Dense 和双方法报告。每题包含：
-
-- `dense`、`bm25`、`hybrid`：三路最终 Top-K。
-- `candidates`：完整的两路候选，可追溯原始分数和排名。
-- Hybrid 的 `rrf_score`、`dense_rank`、`bm25_rank`；缺席一路时排名为 null。
-
-报告同时记录模型名称、归一化配置、BM25 参数、召回数量、RRF 参数、输入 SHA-256 和生成时间。没有标注标准答案，因此分数与排序不是准确率。
-
-## 本次 Hybrid 报告检查
-
-参数为两路各 20 候选、最终 Top-5、RRF k=60。检查 8 题，每题三路各返回 5 条。以下为返回文本与排名的人工观察，页码为 PDF 物理页码，不是正式指标。
-
-| 问题 | Hybrid 结果与比较 |
-|---|---|
-| 总营收 | 第 39 页排第一，仍包含总营收、年份和单位；Dense 第 26 页降至第三 |
-| 大中华区营收 | 第 51 页直接数值证据升至第二，但第一名第 39 页主要是产品收入；BM25 第一的第 25 页未进 Hybrid Top-5 |
-| 大中华区收入变化原因 | 第 25 页解释升至第一；优于本次 Dense 的第三，与 BM25 第一一致 |
-| 供应链风险 | 第 9 页灾害/生产中断证据第一，第 11 页外包依赖第二；候选内容具有互补性 |
-| 网络安全风险 | 治理说明第 20 页第一，目录页第 3 页升至第二；Dense 第一的第 15 页具体风险降至第五 |
-| 经营现金流 | 第 36 页在三种方法中均为第一 |
-| 财年产品发布 | 第 24 页在三种方法中均为第一，但 Hybrid 后续仍混入目录等噪声 |
-| 竞争风险 | 第 11 页产品推出风险第一，第 10 页竞争说明第二；Dense 第一的第 6 页竞争因素降至第五 |
-
-RRF 会偏向两路共同排在前面的结果，不保证相关性更好。例如大中华区营收问题：
-
-- 第 25 页：Dense 第 18、BM25 第 1，RRF = 1/78 + 1/61，约 0.029214。
-- 第 39 页：Dense 第 2、BM25 第 4，RRF = 1/62 + 1/64，约 0.031754。
-
-因此第 39 页排在前面，即使第 25 页更直接回答问题。网络安全的目录页也因两路都召回而被抬高。这是本次融合的局限，不能把 Hybrid 视为天然优于单路的方法。
-
-## 测试与验证记录
-
-```bash
-# 默认不加载模型
-uv run pytest -q
-
-# 独立 Dense 8 题模型检查
-uv run pytest tests/test_dense_retrieval.py --run-dense -s -v
-```
-
-最近普通测试为 **25 passed、8 skipped**；此前 Dense 8 题实际模型测试通过，最新三路批量运行也已成功。模型测试跳过不表示失败，需显式启用。已逐项核对 Hybrid 报告中两路排名与 RRF 分数；不等同于完成相关性评估。
-
-- test_normalizer.py / test_chunker.py：清洗、分块及边界情况。
-- test_bm25.py：实例评分与搜索基础回归。
-- test_compare_methods.py：同题查询、一次编码、缺少 BM25 匹配、融合使用展示范围外的候选。
-- test_dense_retrieval.py：真实模型的向量归一化、排序及来源映射。
-
-当前样本为 80 页、132 chunks，最大 500 词。此前清洗验证删除 58 个目标页脚块和 16 个纯符号块；这些是样本观察，不是固定验收阈值。
-
-## 数据和评分约定
-
-- schemas.py 已用 TypedDict 描述当前字典结构（不做运行时校验）；现有模块尚未全部接入类型注解。page 从 1 开始；PDF 物理页码和报告印刷页码可能不同。
-- chunk_id 在当前文档范围内唯一，包含文档标识、页码和页内序号；重分块后 ID 可能变化。
-- chunk_size=500、overlap=80 按空白词数计量。普通段落 overlap 可减少以维持上限；独立长段落与页边界不额外重叠。
-- BM25 文档与查询统一小写并使用 `[a-z0-9]+` 分词；R&D、64,377 会拆开，不支持中文分词。TF 是块内出现次数，DF 是包含该词的 chunk 数。
-- BM25 IDF 为 `ln(1+(N-df+0.5)/(df+0.5))`，k1=1.5、b=0.75；重复查询词去重，零分结果过滤。
-- RRF 只使用从 1 开始的排名，缺席一路贡献为零，不相加两路原始分数。
-- section/title 尚未自动识别，表格关系与模型截断仍需检查。
-
-## 下一步
-
-1. **固定当前三路基线并补标准标注。** 对照原 PDF 核对 8 题的证据页，明确大中华区营收、经营现金流问题的年份；记录目录误召回和混合主题块。不要只凭检索结果自动生成标准答案。
-2. **验证 Embedding 长度与 RRF 边界。** 用 tokenizer 检查实际输入上限；500 词不是 500 tokens。补 RRF 单路缺席、空列表、重复 ID、非法参数与同分处理测试。若调整分块或问题，三路全部重跑。
-3. **改进并验证已接入的 Reranker。** 将 RRF 融合后的候选保留约 20 条，再以“问题 + 候选正文”重排并取 5 条，比较 Hybrid 与 Hybrid + Reranker；不要只给重排器现有最终 Top-5。重点验证目录页是否下降、直接证据是否上升。
-4. **完善评估和存储。** 扩展到 30–50 道标注题，实现页级或块级 Hit Rate/Recall@K/MRR，负例单独处理；保存索引/向量缓存与兼容性信息。
-5. **再接回答与引用。** 仅依据证据回答并支持证据不足说明，之后再做上传、API、前端与后续权限/Web3 扩展。
-
-当前不根据这 8 题宣称某种算法整体更好，也不为改善单题排名盲调 RRF 参数。
-
-## Git 与依赖
-
-提交源码、测试、README、pyproject.toml、uv.lock、.python-version 和可公开评估标注。不提交 .venv、真实 .env、本地 PDF、生成索引、缓存和 outputs。
-
-```bash
-uv add <package-name>
-uv add --dev <package-name>
-uv remove <package-name>
-```
-
-依赖变化时一并提交 pyproject.toml 和 uv.lock。
-
-## Reranker 接入（2026-09-23）
-
-默认批量命令现已执行四路对比：
-
-```bash
-uv run python -m financial_rag.evaluation.compare_methods
-```
-
-每路召回 20 条，RRF 保留 20 条供 Cross-Encoder 重排，最终输出 5 条。模型为 cross-encoder/ms-marco-MiniLM-L6-v2，循环外加载一次。新报告为 outputs/dense_bm25_hybrid_reranked_comparison.json，不覆盖旧三路基线。
-
-用 --skip-reranker 可回到三路；--reranker-model 可更换模型。当前默认文本对上限为 512 tokens，超限会警告并在每题 reranker_truncated_chunk_ids 中记录。报告正文为原始全文，模型输入可能被截断，重排效果需结合这一限制判断。尚未实现长文本分窗；分数不表示正确概率。
-
-## 四路报告人工检查（2026-09-23）
-
-已检查 `outputs/dense_bm25_hybrid_reranked_comparison.json`：8 题、每题 RRF 候选 20 条、重排后 5 条。此次模型为 cross-encoder/ms-marco-MiniLM-L6-v2，文本对上限 512 tokens。以下描述是当前样本的人工观察，不是正式准确率。
-
-| 问题 | 重排后观察 |
-|---|---|
-| 总营收 | 第 32 页利润表升至第一，仍有直接数值证据 |
-| 大中华区营收 | 第一名仍为第 39 页产品收入；第 51 页直接数值证据从 Hybrid 第二降至第五，未改善 |
-| 大中华区收入变化原因 | 第 25 页仍为第一，但该候选超限；不能据返回全文断言模型看到了末尾原因说明 |
-| 供应链风险 | 第 9 页灾害/生产中断仍第一，外包风险第 11 页从第二降至第三 |
-| 网络安全风险 | 治理说明仍第一、目录仍第二；第 15 页具体风险从 Hybrid 第五掉出 Top-5，出现退步 |
-| 经营现金流 | 第 36 页仍第一；该文本对超限，需要检查关键行是否处于模型保留范围 |
-| 财年产品发布 | 第 24 页仍第一；后续混入利润表和目录，噪声未完全消除 |
-| 竞争风险 | 第 6 页直接竞争因素从 Hybrid 第五升至第一，但它也被标为超限 |
-
-每题超限候选数依次为 11、10、12、16、9、13、9、11，总计 **91/160 次问题—候选配对**（不是 91 个不同 chunks）。截断可能影响排序，但当前报告不能证明它是所有退步的原因。rerank_score 出现负数是允许的，不能套用 BM25 的“零分过滤”，也不能把分数直接视为回答置信度。
-
-### 当前优先事项
-
-1. 保留当前四路报告作为基线，不因个别题改善就判定重排整体有效。
-2. 优先核对第 25 页和其他长候选的 token 截断位置，再选择按 token 分块或对长候选分窗评分；不要只把 max_length 调到超过模型支持范围。
-3. 给 8 题补标准证据，并明确未指定年份的问题口径；单独标记目录/业务介绍等弱证据。
-4. 修改长度策略后重新运行全部四路，再比较直接证据排名与噪声；之后才考虑模型替换和 LLM 回答。
-
-### schemas.py 的当前契约
-
-已定义 TextBlock、ParsedPage、Chunk、SearchResult、FusionResult、RerankedResult，以及带展示 rank 的结果类型、QueryComparison、ComparisonReport 和配置类型。
-
-- 单路分数为 score，融合为 rrf_score，重排为 rerank_score。
-- dense_rank/bm25_rank 是候选排名，缺席为 null；rank 是当前方法输出排名。
-- candidates.rrf 是实际重排输入；reranked 是最终输出。
-- reranker_truncated_chunk_ids 是每题超限候选列表，不只包含最终结果。JSON 中保存的是原始全文，不是截断后的模型输入。
-- TypedDict 只描述字段，不做自动转换或运行时校验；AnswerResult、跨页 pages 尚未实现。
-
-
-### SQLite 索引执行入口
-
-`index_demo.py` 将现有 chunks 的向量持久化到 `storage/vectors.sqlite3`。
-SQLite 负责保存，Dense 仍使用 NumPy 计算相似度；BM25 从同一批 chunks 建立内存索引。
-
-```bash
-# 首次入库：仅在这里编码全部文档，并验证保存/加载结果一致
+# 从现有 chunks 首次入库；数据库已存在时用 --replace 明确整批替换
 uv run index_demo.py build
-
-# 查询：加载已保存向量，仅编码当前问题
 uv run index_demo.py search "What were Apple's total net sales in 2025?"
 
-# chunks 或 embedding 模型改变后整批重建（替换该数据库全部旧记录）
-uv run index_demo.py build --replace
+# 实时完整问答，从 storage/vectors.sqlite3 加载
+uv run --env-file .env python -m financial_rag.pipeline \
+  "What were Apple's total net sales in 2025?" --output outputs/pipeline_answer.json
+
+# 仅读取既有重排报告来测试生成
+uv run --env-file .env generate_demo.py
+
+# 8 题 BGE 四路对比：Dense/BM25/RRF/Reranked
+uv run python -m financial_rag.evaluation.compare_methods \
+  --reranker-model BAAI/bge-reranker-v2-m3 --reranker-max-length 2048 \
+  --output outputs/bge_m3_reranked_comparison.json
+
+# 三路对比使用 --skip-reranker；旧单 PDF 界面保留在 streamlit_app.py
+uv run pytest -q
 ```
 
-两个命令均支持 `--db` 和 `--model`，查询模型必须与入库模型相同。
-该入口目前输出 Dense/BM25 结果，未接 RRF、重排和生成；`generate_demo.py`
-仍从保存的重排报告生成回答。下一步在 pipeline 中整合实时检索与生成。
+## 已完成：独立 Retriever 与去重检索
 
+`FinancialRAG.retrieve()` 委托给 `retrieval.retriever.Retriever`，返回结构保持不变。
+下面演示调用方保存已交付证据的 ID；证据正文及稳定引用编号现在也可交给 EvidenceMemory 管理。
 
-### 实时完整问答 Pipeline
+```python
+first = rag.retrieve(question)
+seen = {item["chunk_id"] for item in first["reranked"]}
+second = rag.retrieve("针对缺失信息的补充查询", exclude_chunk_ids=seen, top_k=5)
+seen.update(item["chunk_id"] for item in second["reranked"])
+```
 
-`FinancialRAG` 复用 SQLite 文档向量和 BM25 索引，每个问题执行 Dense/BM25
-各 Top 20 → RRF Top 20 → BGE 重排 Top 5 → DeepSeek → 引用编号检查。
-它直接检索当前问题，不读取之前的重排报告。文档入库仍使用 `index_demo.py build`。
+`top_k` 默认使用初始化值，按次覆盖必须为正整数且不超过 `candidate_k`。
+排除 ID 不会改变索引或影响其他请求；未知 ID 忽略。两路先扩大召回数量、过滤已读 ID、
+再各取 `candidate_k`，融合后重排。BM25 的语料统计保持不变。
+只有交给模型的 `reranked` 结果应标记为已读。全部片段均已排除时，各阶段返回空列表。
+当前 `ask()` 每题创建独立 EvidenceMemory，仍只检索一次；自主工具调用和循环停止策略已在可选 ask_agent() 中实现。
+
+离线回归测试覆盖以下行为（实际数量以当前 pytest 输出为准）：覆盖候选补足、
+多轮 ID 排除、请求间隔离、片段耗尽、参数校验、原问答流程，以及记忆累积、
+稳定引用、快照隔离、无新增结果记录、失败批次不写入和检索至耗尽；
+另覆盖工具参数校验、调用编号配对、多轮上下文、预算停止及 DeepSeek 响应适配。
+这些测试验证编排行为，不代表检索相关性已达标。
+
+## 已完成：当前问题的证据记忆
+
+`memory/evidence.py` 中的 `EvidenceMemory` 使用 Python 字典和列表，每次 `ask()` 创建新实例，
+不保存到共享 Retriever。已接入单轮问答与 Agent，同一次请求的多轮检索复用同一实例。
+
+- `add_evidence(results, chunks_by_id)`：注册最终证据，按 chunk_id 去重，返回新增 ID。
+- `record_search(query, results, chunks_by_id)`：注册证据并记录返回 ID、新增 ID 和新增数量；空结果也记录。
+- `chunk_ids`：返回已注册 ID 集合，作为下一轮的排除参数。
+- `build_context()`：输出所有累计原文与稳定引用编号；`citation_map` 用于最终引用检查。
+- `evidence`、`search_history`：返回数据快照；修改快照不会改动内部记忆。
+
+正文从原始 chunks 读取，保留 document_id、物理页码及可用的标题、文件名。
+同一片段重复加入保持编号，新片段继续分配 E6、E7 等编号；来源冲突会报错。
+整批验证通过后才写入，失败不会留下部分证据。旧 `prepare_evidence()` 接口保留，内部复用此模块。
+`ask()` 返回结果新增 `search_history`，原有回答、检索轨迹和引用字段保留。
+
+```python
+from financial_rag.memory import EvidenceMemory
+
+memory = EvidenceMemory()  # 每个新问题重新创建
+for query in [question, "针对缺失信息的补充查询"]:
+    trace = rag.retrieve(query, exclude_chunk_ids=memory.chunk_ids)
+    memory.record_search(query, trace["reranked"], rag.chunks_by_id)
+context = memory.build_context()  # 后续模型调用必须实际传入该上下文
+citation_map = memory.citation_map
+```
+
+上面是手动两轮示例，不是当前 ask() 的自动行为。记忆不做语义去重、自动摘要、长期持久化或
+上下文裁剪；工具层和循环层设有字符预算保护。跨问题或更换索引时创建新实例。
+
+ask_agent() 已实现的流程：
+
+```text
+新问题 → 查询规划（原问题 + 最多两条扩写）→ 创建 EvidenceMemory
+→ 顺序执行初始查询、注册证据（这些查询之间没有模型充分性判断）
+→ 模型读取累计证据
+   ├─ 足够：回答并检查引用
+   └─ 不足：生成补充查询 → 排除 memory.chunk_ids 检索
+           → 注册新证据、记录检索历史 → 再调用模型
+```
+
+记忆模块只负责保存和提供证据；是否继续检索由模型工具调用决定，
+轮数上限、无新增证据和上下文预算由 Agent loop 控制。当前 `ask()` 尚未执行上述循环。
+
+## 已完成：检索工具与 DeepSeek 循环
+
+| 位置 | 职责 |
+|---|---|
+| `retrieval/tool.py` 的 `SearchDocumentsTool` | JSON Schema、参数校验、调用 Retriever、注册证据、结构化结果 |
+| `generation/generator.py` 的 `generate_turn()` | 向 DeepSeek 传 tools，保留 tool_calls 和 reasoning_content |
+| `agent/loop.py` 的 `run_agent()` | 模型 → 工具 → 模型循环；请求内记忆、预算、最终引用检查 |
+| `generation/prompt.py` 的 `AGENT_SYSTEM_PROMPT` | 指导模型识别缺失证据、发起补充查询和停止检索 |
+| `pipeline.py` 的 `ask_agent()` | 可选多轮入口；`ask()` 保持单轮基线 |
+
+```python
+result = rag.ask_agent("比较两年的收入变化", max_steps=5, max_searches=5)
+print(result["answer"])
+print(result["status"], result["stop_reason"])
+```
 
 ```bash
 uv run --env-file .env python -m financial_rag.pipeline \
-  "What were Apple's total net sales in 2025?" \
-  --output outputs/pipeline_answer.json
+  "What changed in revenue between the two years?" --agent --output outputs/agent_answer.json
 ```
 
-默认重排使用 `BAAI/bge-reranker-v2-m3`、2048 tokens，生成使用 `deepseek-flash`。
-终端展示答案与引用，`--output` 保存所有阶段候选和配置。未知引用会标记并使命令失败；
-无引用会提示人工检查。编号有效不代表事实获得证据支持，尚未实现语义事实核验。
-该流程依赖已建立的 SQLite 索引；未实现增量入库、交互会话或问答标准指标评估。
+网页已调用 `ask_agent()`，引用正文从累计 `evidence` 读取，支持跨轮来源。
+发送后显示实时计时，完成后保留总耗时、模型调用次数和每轮查询。计时包含网络和服务等待时间。
 
+默认先增加一次模型查询规划，保留原问题，并生成最多两条互补查询（跨公司优先拆分、英文报告使用英文术语）。
+规划失败或 JSON 不合法时回退原问题。初始多个查询共用去重记忆与总检索预算，再让模型决定补查或回答。
+可用 `rag.ask_agent(question, use_query_planning=False)` 关闭规划作对照。
+模型只传 query 和可选 top_k；索引、已读 ID 与证据记忆由后端绑定。
+每个工具调用都回传同一个 tool_call_id，多个调用串行处理；历史证据保留在消息中。
+未知工具和非法参数返回可纠正错误；失败不暴露内部路径或密钥。
 
-### PDF 拖拽上传与网页问答
+默认最多 1 次查询规划调用加 7 次回答/工具决策调用、8 次检索尝试（含首次检索和无效工具请求）。最后一次模型调用
+禁用工具以便总结；无新增证据或证据预算耗尽也禁用后续检索。达到限制时返回 limited
+和 stop_reason，不能当作已完整回答；模型失败返回 error。引用有效性不代表事实正确。
+累计证据默认限 60000 字符、消息默认限 120000 字符；这是字符保护，不是精确 token 预算。
+证据超限不写入记忆、不静默截断；消息超限直接返回 limited。API 使用已有的超时与重试配置，
+尚无独立端到端墙钟超时。响应截断不会当成完整回答。
 
-```bash
-uv run --env-file .env streamlit run streamlit_app.py --server.address 127.0.0.1 --server.maxUploadSize 20
+工具协议依据 [DeepSeek 官方 Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/)。
+自动回归以模拟模型离线验证；用户已通过网页完成真实问答并提供检索截图，这不等于完成系统化质量评测。
+
+下一步聚焦下述两项架构改进，并继续以检索相关性和证据覆盖评估效果。
+
+## 评估观察与技术欠账
+
+完整历史实验记录在 [retrieval_experiments.md](docs/retrieval_experiments.md)。
+Apple 样本为 80 页、132 chunks。MiniLM 512 tokens 的 8 题有 91/160 输入对截断；
+同候选 BGE 2048 报告为 0/160。大中华区销售额证据升至第一，但网络安全题仍将直接风险证据
+排出 Top 5；竞争风险题也存在偏向监管内容的问题。换模型未证明整体更优。
+真实 pipeline 已成功回答总销售额并返回引用；离线 pipeline 编排测试验证不重复编码、
+引用异常与空问题。多 PDF 网页接口已做去重、会话隔离、上传失败保留和文件来源映射检查。
+这些不等于完成标准相关性或生成质量评估；模型测试默认可能跳过。
+
+待做：8 题人工证据标注、明确年份、Hit@K/Recall@K/MRR、生成事实与引用支持性检查、
+embedding 截断评估、多文档证据覆盖、RRF 边界防御、token 分块/分窗、增量索引。
+当前网站未实现公共部署、权限系统、并发优化和会话资料库长期持久化。
+
+## Schema 与版本约定
+
+`schemas.py` 保留检索/实验结构，并补充目前 pipeline 与网页实际输出类型。
+无 Draft 前缀的类型描述当前证据、工具、Agent、网页与流事件；Draft 前缀仅描述尚未实现的主动缺口检索和跨问答记忆。
+TypedDict 只做静态描述；默认值、范围、互斥状态、文档访问范围都须另写运行时校验。
+所有证据保留原始 chunk 正文；模型可能截断输入，不能据报告全文断言模型看过全部内容。
+网页 document_id 是内容哈希，旧 Apple CLI 使用固定 ID；不能把两套索引的编号混为一谈。
+
+## Git 与依赖
+
+提交源码、测试、README、pyproject.toml、uv.lock；不提交 `.env`、`.venv`、PDF、索引与输出。
+通过 `uv add`/`uv remove` 管理依赖。LangChain 虽在依赖中，当前链路及规划的 Agent loop 都显式实现。
+
+## 网页模型本地存放
+
+PDF 解析使用 PyMuPDF，不需要下载解析模型。网页检索使用的两个模型现存放在
+`models/bge-small-en-v1.5/` 和 `models/bge-reranker-v2-m3/`，约占 2.2 GB。
+`prepare_models.py` 固定模型版本，从已有缓存复制真实文件；无缓存时显式使用
+`uv run prepare_models.py --download` 下载。现有目标目录不会被自动覆盖。
+网页使用 `local_files_only=True`，不会联网获取这两个模型。重启后的第一次上传仍需
+把本地权重加载到内存，之后复用；文档编码进度不表示模型下载。
+模型目录不提交 Git。其他学习演示/CLI 仍保留原模型名称加载方式。
+DeepSeek 回答仍需网络；本地模型存放不代表回答模型也已本地化。
+
+查询改写可能改善召回，但会增加时延与模型用量，不能保证相关性提升；需用同一组标注题对照评估。
+
+回答与查询规划提示词已收紧：按用户实际任务判断证据充分性；宽泛比较允许明确期间差异的有限结论，严格同期请求仍需相应证据。默认简洁回答，不因仍有检索预算而补查无关细节。此调整不改变初始查询的固定执行机制，实际减少轮数的效果仍需对照评估。
+
+## 实时进度与回答流
+
+网页使用 `/api/ask/stream`，逐行 JSON 传输规划、检索、补查进度和回答增量。
+工具调用参数拼接完整后才执行；工具轮的临时正文会清除，不作为最终答案。
+仅流出 content，不展示 reasoning_content。最终 done 事件附带引用和计时统计；
+断线或截断会提示未完成，不当作成功。客户端断开后会停止后续轮次；已进行的阻塞请求
+可能需要等返回或 API 超时。后端仍串行使用共享模型，等待期间发送心跳。
+默认上限为 1 次规划 + 7 次决策/回答调用，以及 8 次检索尝试，并非固定执行次数。
+26 秒不是硬性超时或时延保证；复杂问题可能更久，证据足够仍提前结束。
+
+检索过程可按轮展开新增片段：本轮最终排名、稳定引用编号、文件名、PDF 页码、正文预览与全文，以及是否被最终回答引用。未引用不等于不相关。耗时下方显示模型调用拆分，查询规划计入一次模型调用。
+
+## 后续计划一：按信息缺口逐轮驱动检索（尚未实现）
+
+当前开头固定执行原问题及最多两条扩写查询，模型在这一批完成后才判断是否补查。
+因此“DeepSeek 调用 2 次、检索 3 次”通常是一次规划、三次初始检索、一次生成，
+并不是每次检索之间都调用模型判断充分性。检索中的 Embedding 和 Reranker 本地推理
+不计入页面上的 DeepSeek 调用数。
+
+计划取消自动跑完整个初始查询列表：先由模型生成一条查询，取回一批证据后立即判断。
+若不足，在同一次工具决策里给出 missing_information 与 query，再调用现有 Retriever。
+模型不需要为说明缺口和生成查询分别调用两次。缺口描述只是一句可展示理由，不输出思维链。
+
+```text
+当前问题（后续可带对话上下文）→ 模型生成一条初始查询 → 检索并注册证据
+→ 模型检查累计证据
+   ├─ 足够：回答
+   └─ 不足：missing_information + query → 工具检索 → 注册新证据 → 再判断
 ```
 
-打开终端显示的本地地址，拖入 PDF → 点击「开始阅读」→ 输入问题。
-网页复用 FinancialRAG，支持回答历史、引用页码和展开原文。每个浏览器会话使用
-独立的临时 SQLite 索引；替换/移除文件时清除旧索引及问答，不覆盖 storage 中的索引。
-模型共享加载并串行执行；首次启动可能需要下载模型。密钥只从服务端环境变量读取。
-最多上传 20 MB，扫描件无 OCR；当前 embedding 更适合英文文档。
-历史仅展示，每题独立检索；提问时相关文档片段会发送给 DeepSeek。
-这是本地单机界面，尚未实现账户、公共部署或多用户并发优化。
+保留现有去重、稳定引用、流式进度和预算限制。不得为了得到符合预想的数字反复查询；
+公司、期间、单位不匹配时应核查来源。资料不足或无有效进展时明确限制并停止。
+`DraftGapSearchRequest` 为未来接口；当前工具只接受 query/top_k，直接传新字段会被拒绝。
+验收：首批证据足够只查一次；缺一家公司的必要信息时有针对性补查；每次补查可回看理由、
+查询和新增片段；不再机械执行预生成的三条查询。
 
+## 后续计划二：跨问答的对话上下文记忆（尚未实现）
 
-### HTML 多 PDF 网页（推荐）
+已有 EvidenceMemory 只服务一次问题内的多轮检索。网页虽然保留聊天记录，当前后端和模型
+不会读取上一轮提问与回答；不能据此声称支持“它呢”“上一年呢”等追问。
 
-运行 `uv run app.py`，打开 http://127.0.0.1:8000；macOS 也可双击 `start.command`。
-自动从项目 `.env` 读取 DeepSeek 密钥。前端为 `templates/index.html` 和
-`static/style.css`、`static/app.js`，无需 Node 构建；HTML 必须通过 Python 服务打开。
-一次选择或拖入 1–10 份 PDF，每份最多 20 MB，合计 100 MB，点击开始阅读后统一索引。
-同内容自动去重，引用展示文件名与 PDF 页码。新一批成功入库才替换旧资料库；失败保留旧数据。
-资料库按浏览器会话隔离，临时存储，服务重启后需重新上传；清空会删除当前临时索引。
-当前跨文档使用全局 Top 5 证据，不保证每份文件都有证据；比较问题请明确文件和指标。
-旧版 Streamlit 保留在 `streamlit_app.py`。当前是本地开发服务，不面向公开部署。
+首版建议新增 `memory/conversation.py`，在后端当前浏览器会话内用 Python 内存保存最近
+5 个已完成问答对（数量可配置），包括用户问题、最终回答、来源引用和资料库版本。
+每次新问题先读取有界历史，辅助理解公司、指标、期间和指代，再创建独立 EvidenceMemory。
+历史回答是上下文线索，不是新的事实证据；财报事实仍需可回查的原文支持，不能反复引用
+先前模型生成的数字作为 ground truth。指代不明确时应澄清，不擅自猜测。
+
+- 对话记忆按会话隔离，不放进共享模型或 Retriever；失败/中断的输出不当作已完成回答。
+- 分别限制最近轮数与历史字符数，首版先裁剪最旧问答，不引入额外摘要模型或数据库。
+- 引用按 turn_id + citation_id + workspace_version 定位，上一轮 E1 不能直接当成本轮 E1。
+- 首版清空或成功变更资料库后重置对话上下文；重复上传无内容变化不必重置。
+- 服务重启丢失内存；长期持久化暂不在首版范围内。
+
+`DraftConversationTurn`、`DraftConversationMemory`、`DraftContextualQuestion` 描述以上草案，
+不改变当前运行行为。验收：能承接“那上一年呢”；新会话无旧历史；资料库变更后不串旧引用；
+超预算正确裁剪；历史中的错误答案不能覆盖文档事实。
+
+## 下一阶段的评估重点
+
+固定问题和人工核实的原文证据，比较原问题单次检索、当前批量扩写、后续逐轮主动检索。
+逐阶段记录 Dense/BM25 召回、RRF 候选与最终重排位置，检查新增片段贡献和冗余，
+同时统计必要证据覆盖率、排名、DeepSeek 调用数、检索次数与耗时。
+“最终答对”“新增五条”或“被回答引用”都不能单独证明 Retriever 质量。

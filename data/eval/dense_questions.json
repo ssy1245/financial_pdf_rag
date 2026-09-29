@@ -1,0 +1,34 @@
+[
+  {
+    "id": "net_sales",
+    "question": "What were Apple's total net sales in 2025?"
+  },
+  {
+    "id": "china_sales",
+    "question": "What were Apple's net sales in Greater China?"
+  },
+  {
+    "id": "china_change",
+    "question": "Why did Greater China net sales change in 2025?"
+  },
+  {
+    "id": "supply_chain",
+    "question": "What risks does Apple face from its supply chain?"
+  },
+  {
+    "id": "cybersecurity",
+    "question": "What cybersecurity risks does Apple identify?"
+  },
+  {
+    "id": "operating_cash",
+    "question": "How much cash was generated from operating activities?"
+  },
+  {
+    "id": "products",
+    "question": "What products did Apple announce in fiscal 2025?"
+  },
+  {
+    "id": "competition",
+    "question": "What are Apple's major competitive risks?"
+  }
+]

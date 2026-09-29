@@ -6,28 +6,12 @@ import re
 
 
 def prepare_evidence(results, chunks_by_id):
-    evidence_blocks = []
-    citation_map = {}
+    """保留单次调用接口；多轮调用应复用同一个 EvidenceMemory。"""
+    from financial_rag.memory import EvidenceMemory
 
-    for i, result in enumerate(results, start=1):
-        label = f"E{i}"
-        chunk = chunks_by_id[result["chunk_id"]]
-
-        citation_map[label] = {
-            "document_id": chunk["document_id"],
-            "chunk_id": chunk["chunk_id"],
-            "page": chunk["page"],
-        }
-
-        evidence_blocks.append(
-            f"[{label}]\n"
-            f"Document: {chunk.get('title', chunk['document_id'])}\n"
-            f"PDF page: {chunk['page']}\n"
-            f"Text:\n{chunk['text']}"
-        )
-
-    context = "\n\n".join(evidence_blocks)
-    return context, citation_map
+    memory = EvidenceMemory()
+    memory.add_evidence(results, chunks_by_id)
+    return memory.build_context(), memory.citation_map
 
 
 def check_citations(answer, citation_map):
