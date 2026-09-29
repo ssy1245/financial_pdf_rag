@@ -61,7 +61,7 @@ class EvidenceMemory:
         self._evidence.update(pending)
         return list(pending)
 
-    def record_search(self, query, results, chunks_by_id):
+    def record_search(self, query, results, chunks_by_id, missing_information=None):
         """注册一轮最终证据并记录查询；空结果也记录，不代表检索失败。"""
         if not isinstance(query, str) or not query.strip():
             raise ValueError("查询不能为空")
@@ -73,6 +73,8 @@ class EvidenceMemory:
             "new_chunk_ids": new_ids,
             "new_count": len(new_ids),
         }
+        if missing_information is not None:
+            record["missing_information"] = missing_information
         self._search_history.append(record)
         return deepcopy(record)
 

@@ -35,6 +35,10 @@ def client(monkeypatch):
     for state in web.workspaces.values():
         state['folder'].cleanup()
     web.workspaces.clear()
+    for records in web.run_snapshots.values():
+        for snapshot in records.values():
+            snapshot.cleanup()
+    web.run_snapshots.clear()
 
 
 def upload(client, data, name='report.pdf'):
@@ -146,7 +150,7 @@ def test_stream_endpoint_sends_progress_text_and_final_sources(client, monkeypat
     monkeypatch.setattr(state['rag'], 'ask_agent', agent)
     response = c.post('/api/ask/stream', json={'question':'q'})
     events = [json.loads(line) for line in response.data.splitlines()]
-    assert [e['type'] for e in events] == ['progress','progress','answer_delta','done']
+    assert [e['type'] for e in events] == ['progress','progress','answer_delta','progress','done']
     assert events[-1]['result']['sources'][0]['text'] == 'source'
     assert 'evidence' not in events[-1]['result']
 
@@ -179,3 +183,44 @@ def test_evidence_history_contains_all_new_chunks_and_usage():
                                            page=3,text='full text c',rank=2,used_in_answer=False)
     assert history[2]['evidence'] == []
     assert 'evidence' not in result['search_history'][0]
+
+
+def test_export_preserves_run_after_clear_and_is_session_scoped(client, monkeypatch, tmp_path):
+    import json
+    import hashlib
+    c, _ = client
+    raw = pdf('revenue 100')
+    upload(c, raw, 'original.pdf')
+    state = next(iter(web.workspaces.values()))
+    chunk = state['rag'].retriever.chunks[0]
+    result = dict(question='revenue?', answer='100', sources=[], evidence={},
+                  search_history=[], status='completed', query_plan={}, citation_status='no_citations', stop_reason=None, model_calls=2,
+                  retrieval_rounds=[dict(query='revenue', missing_information='amount',
+                      dense=[dict(chunk, score=0.9)], bm25=[], hybrid=[], reranked=[])])
+    monkeypatch.setattr(state['rag'], 'ask_agent', lambda q: result)
+    monkeypatch.setattr(web, 'EXPORT_ROOT', tmp_path / 'exports')
+    response = c.post('/api/ask', json={'question':'revenue?'})
+    run_id = response.json['run_id']
+    assert run_id
+    assert not web.EXPORT_ROOT.exists()
+    with web.app.test_client() as other:
+        assert other.post(f'/api/runs/{run_id}/save', json={}).status_code == 404
+    c.delete('/api/documents')
+    response = c.post(f'/api/runs/{run_id}/save', json={'browser_elapsed_seconds':14.8})
+    assert response.status_code == 200
+    target = Path(response.json['path'])
+    assert (target / 'run.json').is_file()
+    assert json.loads((target / 'run.json').read_text())['question'] == 'revenue?'
+    assert next((target / 'documents').glob('*.pdf')).read_bytes() == raw
+    assert list((target / 'parsed').glob('*.json'))
+    assert list((target / 'normalized').glob('*.json'))
+    assert (target / 'vectors.sqlite3').is_file()
+    assert 'revenue' in (target / 'retrieval_stages.csv').read_text()
+    assert json.loads((target / 'timing.json').read_text())['browser_elapsed_seconds'] == 14.8
+    manifest = json.loads((target / 'manifest.json').read_text())
+    for name, digest in manifest['sha256'].items():
+        assert hashlib.sha256((target / name).read_bytes()).hexdigest() == digest
+    assert not list(target.rglob('.env'))
+    assert c.post(f'/api/runs/{run_id}/save', json={}).json['path'] == str(target)
+    assert len(list(web.EXPORT_ROOT.iterdir())) == 1
+    assert c.post(f'/api/runs/{run_id}/save', json={'browser_elapsed_seconds':-1}).status_code == 400

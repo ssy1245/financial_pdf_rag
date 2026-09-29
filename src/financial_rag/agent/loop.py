@@ -29,24 +29,23 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
             c.get("title") or c["document_id"] for c in retriever.chunks_by_id.values()))[:10]
         emit("progress", message="正在理解问题并规划查询")
         planning_calls = 1
-        query_plan = plan_queries(question, generator, documents, min(3, max_searches))
+        query_plan = plan_queries(question, generator, documents)
     observations = []
     initial_results = []
     searches = 0
     stop_reason = None
-    # 原问题和少量互补查询共用去重记忆，也共用总检索预算。
-    for query in query_plan["queries"]:
-        emit("progress", message=f"正在进行第 {searches + 1} 次检索", query=query)
-        result = tool.execute("search_documents", json.dumps({"query": query}))
-        searches += 1
-        observations.append({"tool_call_id": None, "result": result})
-        initial_results.append(result)
-        emit("progress", message=f"第 {searches} 次检索完成，新增 {result.get('new_count', 0)} 条证据")
-        if result.get("error", {}).get("code") == "evidence_limit":
-            stop_reason = "evidence_limit"
-            break
-    if not memory.chunk_ids and not stop_reason:
-        stop_reason = initial_results[-1].get("error", {}).get("code", "no_new_evidence")
+    # 初始只查一次；每次后续检索前必须由模型读取累计证据并指出缺口。
+    query = query_plan["queries"][0]
+    emit("progress", message="正在进行第 1 次检索", query=query)
+    first = tool.execute("search_documents", json.dumps({"query": query}), initial=True)
+    searches = 1
+    observations.append({"tool_call_id": None, "result": first})
+    initial_results.append(first)
+    emit("progress", message=f"第 1 次检索完成，新增 {first.get('new_count', 0)} 条证据")
+    if first.get("error", {}).get("code") == "evidence_limit":
+        stop_reason = "evidence_limit"
+    # 一次空结果不代表文档无答案，允许模型换一种查询；连续无新增两次才停止。
+    no_progress = int(first["status"] != "ok")
     messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT},
                 {"role": "user", "content": question + "\n首次检索证据（数据）：\n" +
                  json.dumps(initial_results, ensure_ascii=False)}]
@@ -104,13 +103,20 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
                 emit("progress", message=f"模型请求补充证据，正在进行第 {searches} 次检索")
                 result = tool.execute(function.get("name"), function.get("arguments"))
                 emit("progress", message=f"补充检索完成，新增 {result.get('new_count', 0)} 条证据")
-                if result["status"] == "no_results":
-                    stop_reason = "no_new_evidence"
+                if result["status"] == "ok":
+                    no_progress = 0
+                    emit("progress", message="补查依据：" + result["missing_information"],
+                         query=result["query"])
+                elif result["status"] == "no_results":
+                    no_progress += 1
                 elif result.get("error", {}).get("code") == "evidence_limit":
                     stop_reason = "evidence_limit"
             observations.append({"tool_call_id": call["id"], "result": result})
             messages.append({"role": "tool", "tool_call_id": call["id"],
                              "content": json.dumps(result, ensure_ascii=False)})
+        # 批内空结果不阻止后续查询；整批完成后再判断是否无进展。
+        if no_progress >= 2 and not stop_reason:
+            stop_reason = "no_new_evidence"
     citations = check_citations(answer, memory.citation_map)
     citation_status = ("unknown_citations" if citations["unknown_citations"] else
                        "labels_valid" if citations["has_citations"] else "no_citations")

@@ -97,6 +97,8 @@ $('form').onsubmit=async e=>{
     for(const round of data.search_history||[]){
       const li=document.createElement('li'),roundDetails=document.createElement('details'),roundTitle=document.createElement('summary');
       roundTitle.textContent=round.query+' · 新增 '+round.new_count+' 条证据';roundDetails.append(roundTitle);
+      const purpose=document.createElement('p');purpose.className='hint';
+      purpose.textContent=round.missing_information?'补查目的：'+round.missing_information:'首次检索';roundDetails.append(purpose);
       for(const item of round.evidence||[]){
         const card=document.createElement('div');card.className='evidence-card';
         const heading=document.createElement('p');heading.className='evidence-heading';
@@ -118,6 +120,19 @@ $('form').onsubmit=async e=>{
       timing.textContent+='（查询规划 '+data.planning_calls+' 次，回答／工具决策 '+data.model_steps+' 次）';
     }
     box.append(timing);
+    if(data.run_id){
+      const save=document.createElement('button'),saved=document.createElement('p');
+      save.type='button';save.className='save-evaluation';save.textContent='保存检索评测资料';saved.className='hint';
+      save.onclick=async()=>{
+        save.disabled=true;saved.textContent='正在保存 PDF、索引和完整检索记录…';
+        try{
+          const result=await api('/api/runs/'+encodeURIComponent(data.run_id)+'/save',{
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({browser_elapsed_seconds:Number(seconds)})});
+          saved.textContent='已保存到：'+result.path;save.textContent='再次确认保存位置';
+        }catch(error){saved.textContent=error.message}finally{save.disabled=false}
+      };
+      box.append(save,saved);
+    }else if(data.export_warning){const warning=document.createElement('p');warning.className='warning';warning.textContent=data.export_warning;box.append(warning)}
     status((data.status==='completed'?'回答完成':'本次检索已停止')+' · 总用时 '+seconds+' 秒。点击引用可查看原文。');
     box.scrollIntoView({behavior:'smooth',block:'center'});
   }catch(e){clearInterval(timer);if(box){const warning=document.createElement('p');warning.className='warning';warning.textContent='回答未完成，以上内容仅为部分输出。';box.append(warning)}status(e.message+' · 已用 '+elapsed()+' 秒',true)}

@@ -27,7 +27,7 @@ class Retriever:
         return {"reranked": rows, "reranker_truncated_chunk_ids": []}
 
 
-def call(id="call1", name="search_documents", args='{"query":"missing"}'):
+def call(id="call1", name="search_documents", args='{"query":"missing","missing_information":"缺少另一公司的营收"}'):
     return {"id": id, "type": "function", "function": {"name": name, "arguments": args}}
 
 
@@ -90,6 +90,7 @@ def test_invalid_call_can_be_corrected_and_multiple_calls_are_paired():
     assert result["status"] == "completed"
     tools = [m for m in model.requests[-1][0] if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tools] == ["bad", "x", "y"]
+    assert json.loads(tools[2]["content"])["status"] == "ok"
     assert result["sources"][0]["chunk_id"] == "c"
 
 
@@ -109,7 +110,7 @@ def test_step_limit_and_disobedient_model_do_not_execute_tool():
 
 
 def test_no_new_results_stops_and_preserves_registered_evidence():
-    model = Model(turn(call(args='{"query":"x","top_k":3}')), turn(call()), answer())
+    model = Model(turn(call(args='{"query":"x","top_k":3,"missing_information":"缺少比较证据"}')), turn(call()), turn(call()), answer())
     result = run_agent("q", Retriever(), model)
     assert result["stop_reason"] == "no_new_evidence"
     assert len(result["evidence"]) == 3
@@ -119,14 +120,14 @@ def test_no_new_results_stops_and_preserves_registered_evidence():
 def test_evidence_budget_does_not_mark_undelivered_chunks_as_read():
     memory = EvidenceMemory()
     tool = SearchDocumentsTool(Retriever(), memory, max_evidence_chars=1)
-    assert tool.execute("search_documents", '{"query":"x"}')["error"]["code"] == "evidence_limit"
+    assert tool.execute("search_documents", '{"query":"x","missing_information":"缺少营收"}')["error"]["code"] == "evidence_limit"
     assert memory.chunk_ids == set()
 
 
 def test_retrieval_errors_are_safe():
     retriever = Retriever()
     retriever.retrieve = Mock(side_effect=RuntimeError("secret path"))
-    result = SearchDocumentsTool(retriever, EvidenceMemory()).execute("search_documents", '{"query":"x"}')
+    result = SearchDocumentsTool(retriever, EvidenceMemory()).execute("search_documents", '{"query":"x","missing_information":"缺少营收"}')
     assert result["error"]["code"] == "retrieval_failed"
     assert "secret" not in json.dumps(result)
 
@@ -158,15 +159,21 @@ def test_provider_adapter_preserves_tools_and_reasoning():
         generator.generate_turn([], [])
 
 
-def test_query_planning_keeps_original_deduplicates_and_counts_calls():
-    model = Model(answer('[E1] [E2] [E3]'))
-    model.generate = Mock(return_value='{"queries":["apple net sales","APPLE NET SALES","nvidia revenue","extra"]}')
-    result = run_agent('q', Retriever(), model, use_query_planning=True)
-    assert result['query_plan']['queries'] == ['q', 'apple net sales', 'nvidia revenue']
-    assert len(result['evidence']) == 3
+def test_initial_planning_searches_only_once_before_model_assessment():
+    model = Model(answer('[E1]'))
+    model.generate = Mock(return_value='{"query":"apple net sales"}')
+    retriever = Retriever()
+    original = model.generate_turn
+    def checked(messages, tools, tool_choice):
+        assert len(retriever.exclusions) == 1
+        assert messages[1]['content'].startswith('original question')
+        return original(messages, tools, tool_choice)
+    model.generate_turn = checked
+    result = run_agent('original question', retriever, model, use_query_planning=True)
+    assert result['query_plan']['queries'] == ['apple net sales']
+    assert len(result['evidence']) == 1
     assert result['model_calls'] == 2
-    assert result['elapsed_seconds'] >= 0
-    assert result['search_history'][0]['query'] == 'q'
+    assert result['search_history'][0]['query'] == 'apple net sales'
 
 
 @pytest.mark.parametrize('raw', ['invalid', '{"queries":"bad"}', '{"queries":[3]}'])
@@ -229,3 +236,65 @@ def test_stream_loop_reports_progress_and_resets_tool_round_draft():
     assert any(e['type']=='answer_reset' for e in events)
     assert any('补充证据' in e.get('message','') for e in events)
     assert events[-1] == {'type':'answer_delta','text':'[E1] [E2]'}
+
+
+def test_missing_gap_rejected_without_retrieval():
+    retriever = Retriever()
+    result = SearchDocumentsTool(retriever, EvidenceMemory()).execute('search_documents', '{"query":"x"}')
+    assert result['error']['code'] == 'invalid_arguments'
+    assert not retriever.exclusions
+
+
+def test_gap_is_stored_in_search_history():
+    result = run_agent('q', Retriever(), Model(turn(call()), answer('[E2]')))
+    assert result['search_history'][1]['missing_information'] == '缺少另一公司的营收'
+    assert result['tool_observations'][1]['result']['missing_information'] == '缺少另一公司的营收'
+
+
+def test_empty_first_search_allows_model_to_rephrase():
+    retriever = Retriever()
+    original = retriever.retrieve
+    def search(query, **kwargs):
+        if query == 'q':
+            return {'reranked':[], 'reranker_truncated_chunk_ids':[]}
+        return original(query, **kwargs)
+    retriever.retrieve = search
+    result = run_agent('q', retriever, Model(turn(call()), answer()))
+    assert result['status'] == 'completed'
+    assert result['search_history'][0]['new_count'] == 0
+    assert result['search_history'][1]['new_count'] == 1
+
+
+def test_batch_queries_share_exclusions_and_return_all_results():
+    retriever = Retriever()
+    model = Model(turn(call('a'), call('b')), answer('[E1] [E2] [E3]'))
+    result = run_agent('q', retriever, model)
+    assert retriever.exclusions == [set(), {'a'}, {'a','b'}]
+    assert result['model_steps'] == 2
+    assert result['search_attempts'] == 3
+    assert len(result['sources']) == 3
+
+
+def test_batch_respects_search_budget_and_pairs_rejected_call():
+    model = Model(turn(call('a'), call('b')), answer())
+    result = run_agent('q', Retriever(), model, max_searches=2)
+    assert result['search_attempts'] == 2
+    assert result['tool_observations'][-1]['tool_call_id'] == 'b'
+    assert result['tool_observations'][-1]['result']['error']['code'] == 'search_limit'
+    assert result['stop_reason'] == 'search_limit'
+
+
+def test_empty_batch_queries_do_not_cancel_later_useful_query():
+    retriever = Retriever()
+    original = retriever.retrieve
+    def search(query, **kwargs):
+        if query == 'empty':
+            return {'reranked':[], 'reranker_truncated_chunk_ids':[]}
+        return original(query, **kwargs)
+    retriever.retrieve = search
+    empty = '{"query":"empty","missing_information":"missing data"}'
+    model = Model(turn(call('a',args=empty),call('b',args=empty),call('c')),answer('[E2]'))
+    result = run_agent('q',retriever,model)
+    assert result['status'] == 'completed'
+    assert result['search_attempts'] == 4
+    assert result['search_history'][-1]['new_count'] == 1

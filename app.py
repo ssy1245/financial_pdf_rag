@@ -11,6 +11,9 @@ import queue
 from time import perf_counter
 from pathlib import Path
 from functools import lru_cache
+from collections import OrderedDict
+from datetime import datetime, timezone
+from financial_rag.evaluation.export import snapshot_run, save_bundle
 
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, render_template, request, session
@@ -27,6 +30,8 @@ app.config.update(SECRET_KEY=secrets.token_hex(32), MAX_CONTENT_LENGTH=101*1024*
 MODEL = "BAAI/bge-small-en-v1.5"
 lock = threading.RLock()
 workspaces = {}
+run_snapshots = {}
+EXPORT_ROOT = ROOT / "outputs/retriever_evaluations"
 
 
 @lru_cache(maxsize=1)
@@ -140,6 +145,35 @@ def upload():
         return jsonify(error="处理失败，请检查模型是否可用后重试；原文档仍保留"), 500
 
 
+def remember_run(session_id, state, result):
+    """每会话缓存最近五次快照，绑定当时资料库，不受追加/清空影响。"""
+    run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-') + secrets.token_hex(8)
+    snapshot = snapshot_run(state, result, ROOT)
+    records = run_snapshots.setdefault(session_id, OrderedDict())
+    records[run_id] = snapshot
+    while len(records) > 5:
+        _, old = records.popitem(last=False)
+        old.cleanup()
+    return run_id
+
+
+@app.post('/api/runs/<run_id>/save')
+def save_run(run_id):
+    body = request.get_json(silent=True) or {}
+    elapsed = body.get('browser_elapsed_seconds') if isinstance(body, dict) else None
+    if elapsed is not None and (type(elapsed) not in (int, float) or not np.isfinite(elapsed) or elapsed < 0):
+        return jsonify(error='耗时参数无效'), 400
+    with lock:
+        snapshot = run_snapshots.get(session.get('id'), {}).get(run_id)
+        if snapshot is None:
+            return jsonify(error='该次记录已过期或服务已重启，请重新提问后保存'), 404
+        try:
+            path = save_bundle(Path(snapshot.name), EXPORT_ROOT, run_id, elapsed)
+            return jsonify(path=str(path), run_id=run_id)
+        except Exception:
+            return jsonify(error='保存失败，请检查磁盘空间和目录权限后重试'), 500
+
+
 def evidence_history(result, names):
     """把每轮新增 ID 映射到正文；展示排名为当轮最终检索结果顺序。"""
     used = {source['chunk_id'] for source in result['sources']}
@@ -173,11 +207,16 @@ def ask():
             result = state['rag'].ask_agent(question)
             if result['status'] == 'error':
                 return jsonify(error='模型调用失败，请检查网络或配置后重试', elapsed_seconds=round(perf_counter()-started, 3)), 502
+            try:
+                run_id = remember_run(session.get('id'), state, result)
+                export_warning = None
+            except Exception:
+                run_id, export_warning = None, '评测快照准备失败，本次无法保存；回答仍可查看'
             evidence = result['evidence']
             for source in result['sources']:
                 source['filename'] = state['names'][source['document_id']]
                 source['text'] = evidence[source['chunk_id']]['text']
-            return jsonify(answer=result['answer'], sources=result['sources'], citation_status=result['citation_status'],
+            return jsonify(run_id=run_id, export_warning=export_warning, answer=result['answer'], sources=result['sources'], citation_status=result['citation_status'],
                            status=result['status'], stop_reason=result['stop_reason'],
                            query_plan=result['query_plan'], search_history=evidence_history(result, state['names']),
                            planning_calls=result.get('planning_calls'), model_steps=result.get('model_steps'),
@@ -234,6 +273,13 @@ def ask_stream():
             payload['search_history'] = evidence_history(result, state['names'])
             payload['planning_calls'] = result.get('planning_calls')
             payload['model_steps'] = result.get('model_steps')
+            emit({"type": "progress", "message": "回答已生成，正在准备可保存的检索记录"})
+            try:
+                payload['run_id'] = remember_run(session_id, state, result)
+                payload['export_warning'] = None
+            except Exception:
+                payload['run_id'] = None
+                payload['export_warning'] = '评测快照准备失败，本次无法保存；回答仍可查看'
             emit({"type": "done", "result": payload})
         except Exception:
             if not cancelled.is_set():

@@ -3,7 +3,7 @@
 覆盖页面、chunk、单路检索、RRF、重排与批量报告。page 为单个 PDF 物理页码；
 模型分数分别保存为 score / rrf_score / rerank_score，不能混用。
 TypedDict 仅提供静态提示，不执行运行时校验；现有模块尚未全部接入这些类型注解。
-包含当前 pipeline、Agent、网页和流式事件输出；Draft 前缀仅用于后续主动检索和对话记忆计划。
+包含当前 pipeline、Agent、网页和流式事件输出；Draft 前缀仅用于后续对话记忆计划。
 跨页 pages 未实现；下列类型不新增运行时行为。
 """
 from typing import Literal, NotRequired, TypedDict
@@ -155,6 +155,7 @@ class SearchHistoryEntry(TypedDict):
     retrieved_chunk_ids: list[str]
     new_chunk_ids: list[str]
     new_count: int
+    missing_information: NotRequired[str | None]
 
 
 class AnswerResult(TypedDict):
@@ -182,11 +183,12 @@ class Evidence(TypedDict):
 
 
 class QueryPlan(TypedDict):
-    queries: list[str]  # 原问题 + 最多两条扩展查询；当前先全部执行再交给模型判断
+    queries: list[str]  # 仅一条初始查询；规划失败回退原问题
     warning: str | None
 
 
 class SearchDocumentsRequest(TypedDict):
+    missing_information: str  # 模型补查必填；程序首次检索由 initial=True 豁免
     query: str
     top_k: NotRequired[int]
 
@@ -201,6 +203,7 @@ class SearchDocumentsSuccess(TypedDict):
     query: str
     evidence: list[Evidence]
     new_count: int
+    missing_information: NotRequired[str | None]
     warnings: list[str]
 
 
@@ -284,6 +287,8 @@ class WebSearchHistoryEntry(SearchHistoryEntry):
 
 
 class WebAnswerResult(TypedDict):
+    run_id: NotRequired[str | None]
+    export_warning: NotRequired[str | None]
     answer: str
     sources: list[WebCitationSource]
     citation_status: Literal["unknown_citations", "labels_valid", "no_citations"]
@@ -331,10 +336,6 @@ StreamEvent = ProgressEvent | AnswerDeltaEvent | AnswerResetEvent | HeartbeatEve
 
 
 # 后续计划：以下仅为协议草案，本次不实现，不允许直接传给现有工具。
-class DraftGapSearchRequest(SearchDocumentsRequest):
-    missing_information: str  # 简短、可展示的信息缺口，与 query 在同一次模型调用中产生
-
-
 class DraftEvidenceReference(CitationLocation):
     turn_id: str
     citation_id: str  # 必须与 turn_id 联合定位，不能混用上一轮的 E1
