@@ -31,6 +31,8 @@ def client(monkeypatch):
     embedding = Embedding()
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'offline-test')
     monkeypatch.setattr(web, 'models', lambda: (embedding, object()))
+    from test_structured_documents import Tokenizer
+    monkeypatch.setattr(web, 'document_tokenizer', lambda: Tokenizer())
     monkeypatch.setattr('financial_rag.generation.generator.DeepSeekGenerator', lambda: object())
     with TestClient(web.app) as client:
         yield client, embedding
@@ -374,3 +376,47 @@ def test_upload_limit_without_content_length(client, monkeypatch):
     assert 'content-length' not in response.request.headers
     assert response.status_code == 413
     assert 'error' in response.json()
+
+
+def test_mixed_upload_structure_sources_export_and_isolation(client,monkeypatch,tmp_path):
+    from test_structured_documents import word_file,excel_file
+    c,embedding=client
+    word=word_file(tmp_path/'report.docx').read_bytes()
+    excel=excel_file(tmp_path/'report.xlsx').read_bytes()
+    assert upload(c,pdf('Original'),'first.pdf').status_code==200
+    response=c.post('/api/upload',files=[('files',('report.docx',word)),('files',('report.xlsx',excel))])
+    assert response.status_code==200,response.text
+    state=workspace_for(c)
+    assert [d['format'] for d in response.json()['documents']]==['pdf','docx','xlsx']
+    doc_id=next(d['document_id'] for d in state['documents'] if d['format']=='xlsx')
+    structured=c.get(f'/api/documents/{doc_id}/structure')
+    assert structured.status_code==200 and structured.json()['tables'][0]['cells']
+    assert c.get(f'/api/documents/{doc_id}/original').content==excel
+    with TestClient(web.app) as other:
+        assert other.get(f'/api/documents/{doc_id}/structure').status_code==404
+        assert other.get(f'/api/documents/{doc_id}/original').status_code==404
+    chunks=[v for v in state['rag'].chunks_by_id.values() if v['document_id']==doc_id]
+    from financial_rag.memory.evidence import EvidenceMemory
+    mem=EvidenceMemory();mem.add_evidence(chunks,state['rag'].chunks_by_id)
+    from financial_rag.generation.citations import check_citations
+    sources=check_citations('answer [E1]',mem.citation_map)['sources']
+    assert sources[0]['source']['format']=='xlsx'
+    assert sources[0]['page'] is None
+    result=completed_result('mixed');result['evidence']=mem.evidence;result['sources']=sources
+    monkeypatch.setattr(state['rag'],'ask_agent',lambda q:result)
+    monkeypatch.setattr(web,'EXPORT_ROOT',tmp_path/'exports')
+    rid=c.post('/api/ask',json={'question':'mixed'}).json()['run_id']
+    c.delete('/api/documents')
+    saved=c.post(f'/api/runs/{rid}/save',json={})
+    assert saved.status_code==200,saved.text
+    destination=Path(saved.json()['path'])
+    assert {p.suffix for p in (destination/'documents').iterdir()}=={'.pdf','.docx','.xlsx'}
+    assert json.loads((destination/'structured'/f'{doc_id}.json').read_text())==structured.json()
+
+
+def test_scanned_pdf_rejected_with_explicit_ocr_reason(client):
+    c,_=client
+    with pymupdf.open() as doc:
+        doc.new_page();raw=doc.tobytes()
+    response=upload(c,raw)
+    assert response.status_code==400 and 'OCR' in response.json()['error']

@@ -1,5 +1,6 @@
 """请求内证据注册表；不持久化、不调用模型、不共享跨问题状态。"""
 from copy import deepcopy
+from financial_rag.ingestion.document import SourceLocation, provenance, location_label
 
 
 class EvidenceMemory:
@@ -22,12 +23,12 @@ class EvidenceMemory:
 
     @property
     def citation_map(self):
-        return {
+        return deepcopy({
             item["citation_id"]: {
-                key: item[key] for key in ("document_id", "chunk_id", "page")
+                **{key: item[key] for key in ("document_id", "chunk_id", "page")}, **provenance(item)
             }
             for item in self._evidence.values()
-        }
+        })
 
     def add_evidence(self, results, chunks_by_id):
         """注册最终检索结果，返回新增 ID；正文以原始 chunk 为准。
@@ -44,16 +45,23 @@ class EvidenceMemory:
             for key in ("chunk_id", "document_id", "text"):
                 if not isinstance(chunk[key], str) or not chunk[key].strip():
                     raise ValueError(f"证据 {key} 必须为非空字符串")
-            if type(chunk["page"]) is not int or chunk["page"] <= 0:
+            if "source" in chunk:
+                location = SourceLocation.model_validate(chunk["source"])
+                if location.page != chunk.get("page"):
+                    raise ValueError("page 与来源定位不一致")
+            elif type(chunk["page"]) is not int or chunk["page"] <= 0:
                 raise ValueError("证据 page 必须为正整数")
             # 只保留来源字段，不接受输入提供的 citation_id。
             item = {key: chunk[key] for key in ("chunk_id", "document_id", "page", "text")}
+            item.update(provenance(chunk))
+            if "source" in item:
+                item["source_label"] = location_label(item["source"])
             for key in ("title", "filename"):
                 if chunk.get(key):
                     item[key] = chunk[key]
             existing = self._evidence.get(chunk_id, pending.get(chunk_id))
             if existing is not None:
-                if any(existing[key] != item[key] for key in ("document_id", "page", "text")):
+                if any(existing.get(key) != item.get(key) for key in ("document_id", "page", "text")) or provenance(existing) != provenance(item):
                     raise ValueError("相同 chunk_id 的证据已变化，请为新索引创建新的记忆")
                 continue
             item["citation_id"] = f"E{len(self._evidence) + len(pending) + 1}"
@@ -83,7 +91,12 @@ class EvidenceMemory:
         return "\n\n".join(
             f"[{item['citation_id']}]\n"
             f"Document: {item.get('title', item['document_id'])}\n"
-            f"PDF page: {item['page']}\n"
-            f"Text:\n{item['text']}"
+            f"Location: {item.get('source_label', 'PDF page: '+str(item['page']))}\n"
+            f"{ocr_notice(item)}Text:\n{item['text']}"
             for item in self._evidence.values()
         )
+
+
+def ocr_notice(item):
+    pages=item.get("ocr_pending_pages", [])
+    return f"Document has unrecognized regions on PDF pages {pages}; OCR pending.\n" if pages else ""

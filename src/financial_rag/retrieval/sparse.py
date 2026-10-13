@@ -5,6 +5,8 @@
 过滤零分，允许结果少于 K 条，top_k<=0 返回空列表。
 不重建索引，不执行融合、文档权限过滤或回答生成。
 """
+from financial_rag.ingestion.document import provenance
+
 from financial_rag.indexing.bm25_index import BM25Index
 
 
@@ -35,6 +37,7 @@ def bm25_search(
 
         results.append({
             "chunk_id": chunk["chunk_id"],
+                **provenance(chunk),
             "page": chunk["page"],
             "score": scores[i],
             "text": chunk["text"],

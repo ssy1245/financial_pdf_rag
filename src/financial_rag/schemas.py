@@ -1,12 +1,27 @@
 """当前字典/JSON 数据契约，使用 TypedDict 描述，不改变运行时存储格式。
 
-覆盖页面、chunk、单路检索、RRF、重排与批量报告。page 为单个 PDF 物理页码；
+覆盖页面、chunk、单路检索、RRF、重排与批量报告。page 为单个 PDF 物理页码，Word/Excel 为 None；source 保存格式专属定位。
 模型分数分别保存为 score / rrf_score / rerank_score，不能混用。
 TypedDict 仅提供静态提示，不执行运行时校验；现有模块尚未全部接入这些类型注解。
 包含当前 pipeline、Agent、网页和流式事件输出；包括会话记录和传给规划器的有界上下文。
 跨页 pages 未实现；下列类型不新增运行时行为。
 """
 from typing import Literal, NotRequired, TypedDict
+
+
+class Provenance(TypedDict, total=False):
+    source: dict
+    source_label: str
+    element_id: str
+    table_id: str
+    cell_refs: list[dict]
+    header_cell_refs: list[dict]
+    context_refs: list[str]
+    text_span: list[int]
+    text_spans: list[dict]
+    ocr_pending_pages: list[int]
+    schema_version: str
+    parser_version: str
 
 
 class TextBlock(TypedDict):
@@ -24,20 +39,20 @@ class ParsedPage(TypedDict):
     title: NotRequired[str | None]
 
 
-class Chunk(TypedDict):
+class Chunk(Provenance):
     chunk_id: str
     document_id: str
-    page: int
+    page: int | None
     word_count: int
     text: str
     section: NotRequired[str | None]
     title: NotRequired[str | None]
 
 
-class SearchResult(TypedDict):
+class SearchResult(Provenance):
     """Dense 或 BM25 输出；score 的含义由所属方法确定。"""
     chunk_id: str
-    page: int
+    page: int | None
     text: str
     score: float
 
@@ -46,9 +61,9 @@ class RankedSearchResult(SearchResult):
     rank: int  # 当前方法展示排名，从 1 开始
 
 
-class FusionResult(TypedDict):
+class FusionResult(Provenance):
     chunk_id: str
-    page: int
+    page: int | None
     text: str
     dense_rank: int | None  # 两路完整候选中的排名，不是最终展示排名
     bm25_rank: int | None
@@ -124,11 +139,11 @@ class ComparisonReport(TypedDict):
 
 
 # 当前 pipeline 与网页已经返回的数据结构。
-class CitationSource(TypedDict):
+class CitationSource(Provenance):
     label: str
     document_id: str
     chunk_id: str
-    page: int
+    page: int | None
 
 
 class WebCitationSource(CitationSource):
@@ -136,10 +151,10 @@ class WebCitationSource(CitationSource):
     text: str
 
 
-class CitationLocation(TypedDict):
+class CitationLocation(Provenance):
     document_id: str
     chunk_id: str
-    page: int
+    page: int | None
 
 
 class RetrievalTrace(TypedDict):
@@ -172,11 +187,11 @@ class AnswerResult(TypedDict):
 
 
 # 已实现的请求内证据、检索工具、Agent 与网页结构。
-class Evidence(TypedDict):
+class Evidence(Provenance):
     citation_id: str
     document_id: str
     chunk_id: str
-    page: int
+    page: int | None
     text: str
     title: NotRequired[str]
     filename: NotRequired[str]
@@ -275,11 +290,11 @@ class AgentResult(TypedDict):
     elapsed_seconds: float  # Agent 内部耗时，不等于浏览器端到端耗时
 
 
-class WebEvidence(TypedDict):
+class WebEvidence(Provenance):
     chunk_id: str
     citation_id: str
     filename: str
-    page: int
+    page: int | None
     text: str
     rank: int  # 本轮最终结果排名，不是 Dense/BM25 排名
     used_in_answer: bool  # 未引用不等于不相关
@@ -354,3 +369,6 @@ class ConversationContext(TypedDict):
     question: str
     resolved_question: str
     answer: str  # 仅用于指代理解，不是本轮事实证据
+
+# Runtime-validated unified ingestion contract. Legacy TypedDicts above remain compatible.
+from financial_rag.ingestion.document import Document, Element, Table, Cell, SourceLocation, OCRRequest, OCRResult, OCRBackend

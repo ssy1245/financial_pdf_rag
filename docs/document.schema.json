@@ -1,0 +1,531 @@
+{
+  "$defs": {
+    "Cell": {
+      "properties": {
+        "row": {
+          "minimum": 1,
+          "title": "Row",
+          "type": "integer"
+        },
+        "column": {
+          "minimum": 1,
+          "title": "Column",
+          "type": "integer"
+        },
+        "row_span": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Row Span",
+          "type": "integer"
+        },
+        "column_span": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Column Span",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "value_type": {
+          "default": "text",
+          "title": "Value Type",
+          "type": "string"
+        },
+        "formula": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formula"
+        },
+        "cached_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cached Value"
+        },
+        "cache_status": {
+          "default": "not_formula",
+          "enum": [
+            "not_formula",
+            "missing",
+            "unverified"
+          ],
+          "title": "Cache Status",
+          "type": "string"
+        },
+        "number_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Number Format"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceLocation"
+        }
+      },
+      "required": [
+        "row",
+        "column",
+        "text",
+        "source"
+      ],
+      "title": "Cell",
+      "type": "object"
+    },
+    "Element": {
+      "properties": {
+        "element_id": {
+          "title": "Element Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "paragraph",
+            "heading",
+            "table"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceLocation"
+        },
+        "table_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Id"
+        },
+        "extraction": {
+          "default": "native",
+          "enum": [
+            "native",
+            "ocr"
+          ],
+          "title": "Extraction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "element_id",
+        "kind",
+        "source"
+      ],
+      "title": "Element",
+      "type": "object"
+    },
+    "OCRRequest": {
+      "properties": {
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "page": {
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bbox"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "status": {
+          "const": "needs_ocr",
+          "default": "needs_ocr",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_id",
+        "page",
+        "reason"
+      ],
+      "title": "OCRRequest",
+      "type": "object"
+    },
+    "SourceLocation": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "pdf",
+            "docx",
+            "xlsx"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bbox"
+        },
+        "paragraph": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paragraph"
+        },
+        "heading_path": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Heading Path",
+          "type": "array"
+        },
+        "table": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table"
+        },
+        "sheet": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sheet"
+        },
+        "cell_range": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cell Range"
+        },
+        "row_start": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row Start"
+        },
+        "row_end": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row End"
+        },
+        "column_start": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column Start"
+        },
+        "column_end": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column End"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "title": "SourceLocation",
+      "type": "object"
+    },
+    "Table": {
+      "properties": {
+        "table_id": {
+          "title": "Table Id",
+          "type": "string"
+        },
+        "rows": {
+          "minimum": 1,
+          "title": "Rows",
+          "type": "integer"
+        },
+        "columns": {
+          "minimum": 1,
+          "title": "Columns",
+          "type": "integer"
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/Cell"
+          },
+          "title": "Cells",
+          "type": "array"
+        },
+        "header_rows": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Header Rows",
+          "type": "array"
+        },
+        "header_origin": {
+          "default": "unknown",
+          "enum": [
+            "explicit",
+            "heuristic",
+            "unknown"
+          ],
+          "title": "Header Origin",
+          "type": "string"
+        },
+        "column_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Column Names",
+          "type": "array"
+        },
+        "column_header_sources": {
+          "items": {
+            "$ref": "#/$defs/SourceLocation"
+          },
+          "title": "Column Header Sources",
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceLocation"
+        }
+      },
+      "required": [
+        "table_id",
+        "rows",
+        "columns",
+        "cells",
+        "source"
+      ],
+      "title": "Table",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "parser_version": {
+      "default": "native-v1",
+      "title": "Parser Version",
+      "type": "string"
+    },
+    "document_id": {
+      "title": "Document Id",
+      "type": "string"
+    },
+    "filename": {
+      "title": "Filename",
+      "type": "string"
+    },
+    "format": {
+      "enum": [
+        "pdf",
+        "docx",
+        "xlsx"
+      ],
+      "title": "Format",
+      "type": "string"
+    },
+    "elements": {
+      "items": {
+        "$ref": "#/$defs/Element"
+      },
+      "title": "Elements",
+      "type": "array"
+    },
+    "tables": {
+      "items": {
+        "$ref": "#/$defs/Table"
+      },
+      "title": "Tables",
+      "type": "array"
+    },
+    "ocr_requests": {
+      "items": {
+        "$ref": "#/$defs/OCRRequest"
+      },
+      "title": "Ocr Requests",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "page_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Page Count"
+    },
+    "sheets": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Sheets",
+      "type": "array"
+    }
+  },
+  "required": [
+    "document_id",
+    "filename",
+    "format"
+  ],
+  "title": "Document",
+  "type": "object"
+}

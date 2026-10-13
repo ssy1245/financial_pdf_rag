@@ -5,6 +5,8 @@
 chunk_id/page/score/text；不在本模块编码文本或建立持久化索引。
 当前不提供文档权限过滤，也没有完整的向量形状与参数校验。
 """
+from financial_rag.ingestion.document import provenance
+
 import numpy as np
 
 
@@ -22,6 +24,7 @@ def dense_search(
         results.append(
             {
                 "chunk_id": chunks[index]["chunk_id"],
+                **provenance(chunks[index]),
                 "page": chunks[index]["page"],
                 "score": float(scores[index]),
                 "text": chunks[index]["text"],

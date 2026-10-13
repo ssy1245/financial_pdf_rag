@@ -25,12 +25,18 @@ def snapshot_run(state, result, root):
         (target / 'documents').mkdir()
         documents = []
         for doc_id, name in state['names'].items():
-            source = Path(state['folder'].name) / f'{doc_id}.pdf'
-            destination = target / 'documents' / f'{doc_id}.pdf'
+            suffix = Path(name).suffix.lower()
+            source = Path(state['folder'].name) / f'{doc_id}{suffix}'
+            destination = target / 'documents' / f'{doc_id}{suffix}'
             shutil.copyfile(source, destination)
             documents.append({'document_id': doc_id, 'filename': name,
-                              'file': f'documents/{doc_id}.pdf',
+                              'file': f'documents/{doc_id}{suffix}',
                               'sha256': hashlib.sha256(destination.read_bytes()).hexdigest()})
+        (target / 'structured').mkdir()
+        for doc_id in state['names']:
+            parsed = Path(state['folder'].name) / f'{doc_id}.json'
+            if parsed.is_file():
+                shutil.copyfile(parsed, target / 'structured' / parsed.name)
         shutil.copyfile(Path(state['folder'].name) / 'vectors.sqlite3', target / 'vectors.sqlite3')
         write_json(target / 'chunks.json', retriever.chunks)
         write_json(target / 'run.json', result)
@@ -50,11 +56,11 @@ def snapshot_run(state, result, root):
                   'reranker_max_length': getattr(retriever.reranker, 'max_length', None),
                   'generation_model': getattr(state['rag'].generator, 'model', None),
                   'candidate_k': retriever.candidate_k, 'top_k': retriever.top_k, 'rrf_k': retriever.rrf_k,
-                  'chunking': {'max_words':500,'overlap_words':80}, 'agent_budgets':budgets,
+                  'chunking': {'max_tokens':300,'overlap_tokens':0,'table_strategy':'row_with_header','schema_version':'1.0','parser_version':'native-v1'}, 'agent_budgets':budgets,
                   'use_query_planning':True, 'model_revisions':revisions}
         write_json(target / 'config.json', config)
         versions = {}
-        for name in ('numpy','sentence-transformers','transformers','pymupdf','openai','fastapi','starlette','uvicorn'):
+        for name in ('python-docx','openpyxl','numpy','sentence-transformers','transformers','pymupdf','openai','fastapi','starlette','uvicorn'):
             try: versions[name] = importlib.metadata.version(name)
             except importlib.metadata.PackageNotFoundError: pass
         write_json(target / 'versions.json', versions)
@@ -83,29 +89,38 @@ def save_bundle(snapshot, output_root, run_id, browser_elapsed_seconds=None):
         (destination / 'parsed').mkdir()
         (destination / 'normalized').mkdir()
         for document in documents:
-            pages = parse_pdf(destination / document['file'])
-            write_json(destination / 'parsed' / (document['document_id']+'.json'), pages)
-            write_json(destination / 'normalized' / (document['document_id']+'.json'), normalize_pages(pages))
+            fixed = destination / 'structured' / (document['document_id']+'.json')
+            if fixed.is_file():
+                # Exact ingestion snapshot, not a reparse with possibly newer code.
+                shutil.copyfile(fixed, destination / 'parsed' / fixed.name)
+                write_json(destination / 'normalized' / fixed.name, {
+                    'document_id':document['document_id'], 'chunks':[
+                        c for c in json.loads((destination / 'chunks.json').read_text())
+                        if c['document_id']==document['document_id']]})
+            else:  # historical PDF snapshots
+                pages = parse_pdf(destination / document['file'])
+                write_json(destination / 'parsed' / (document['document_id']+'.json'), pages)
+                write_json(destination / 'normalized' / (document['document_id']+'.json'), normalize_pages(pages))
         # 阶段排名一行一条；不同阶段的分数不能横向比较。
         with (destination / 'retrieval_stages.csv').open('w',encoding='utf-8-sig',newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['round','query','missing_information','stage','rank','chunk_id','page','score','rrf_score','rerank_score','text'])
+            writer = csv.DictWriter(f, fieldnames=['round','query','missing_information','stage','rank','chunk_id','page','source_label','score','rrf_score','rerank_score','text'])
             writer.writeheader()
             for number, trace in enumerate(result.get('retrieval_rounds',[]),1):
                 for stage in ('dense','bm25','hybrid','reranked'):
                     for rank,item in enumerate(trace.get(stage,[]),1):
-                        row={k:item.get(k,'') for k in ('chunk_id','page','score','rrf_score','rerank_score','text')}
+                        row={k:item.get(k,'') for k in ('chunk_id','page','source_label','score','rrf_score','rerank_score','text')}
                         writer.writerow(dict(row,round=number,query=trace['query'],missing_information=trace.get('missing_information'),stage=stage,rank=rank))
         write_json(destination / 'ground_truth_template.json', {
             'question':result.get('question'), 'expected_evidence':[],
-            'instructions':'人工填写 document_id、page、原文片段和必要信息点；不是已验证 ground truth。'})
+            'instructions':'人工填写 document_id、source（格式专属定位）、原文片段和必要信息点；不是已验证 ground truth。'})
         write_json(destination / 'timing.json', {'agent_elapsed_seconds':result.get('elapsed_seconds'),
                    'browser_elapsed_seconds':browser_elapsed_seconds})
         (destination / 'README.md').write_text("""# 检索评测资料包
 
 - run.json：原问题、查询规划、补查理由、每阶段候选、工具结果、累计证据、引用及调用次数。
 - retrieval_stages.csv：各轮 Dense/BM25/RRF/重排结果及排名、原始分数。
-- documents/、documents.json：本次资料库全部原始 PDF、原文件名与哈希映射。
-- parsed/、normalized/：点击保存时从本次固定 PDF 用当前解析函数重建的页面数据。
+- documents/、documents.json：本次资料库全部原始 PDF / Word / Excel、原文件名与哈希映射。
+- structured/、parsed/：入库时固定的完整统一结构；normalized/：本次实际检索视图。历史 PDF 包兼容旧解析格式。
 - chunks.json、vectors.sqlite3：问答时实际使用的分块与向量索引快照。
 - config.json、versions.json、source/：运行配置、依赖版本、问答时源码快照。
 - answer.md、timing.json：回答与计时；浏览器耗时由客户端提供，仅作诊断参考。

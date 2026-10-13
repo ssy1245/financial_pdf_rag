@@ -1,0 +1,2755 @@
+[
+  {
+    "id": "financebench_id_04980",
+    "document_id": "PEPSICO_2021_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Capital spending / 4625",
+        "pages": [
+          63
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Capital spending"
+            ]
+          },
+          {
+            "number": "4625"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": "参考答案 4.60 billion 为粗略表述，表内原值 4,625 million。"
+  },
+  {
+    "id": "financebench_id_00216",
+    "document_id": "VERIZON_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total current assets / 37857",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total current assets"
+            ]
+          },
+          {
+            "number": "37857"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Inventories / 2388",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Inventories"
+            ]
+          },
+          {
+            "number": "2388"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Prepaid expenses and other / 8358",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Prepaid expenses and other"
+            ]
+          },
+          {
+            "number": "8358"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u4",
+        "label": "Total current liabilities / 50171, 47160",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total current liabilities"
+            ]
+          },
+          {
+            "number": "50171"
+          },
+          {
+            "number": "47160"
+          }
+        ],
+        "max_span": 85,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": "解析文本把两年负债合计放在行名前；允许同一局部范围内逆序匹配，不自动验证年度列空间关系。"
+  },
+  {
+    "id": "financebench_id_00591",
+    "document_id": "ADOBE_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net cash provided by operating activities / 7838, 7230",
+        "pages": [
+          57
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net cash provided by operating activities"
+            ]
+          },
+          {
+            "number": "7838"
+          },
+          {
+            "number": "7230"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Purchases of property and equipment / 442, 348",
+        "pages": [
+          57
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Purchases of property and equipment"
+            ]
+          },
+          {
+            "number": "442"
+          },
+          {
+            "number": "348"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Net income / 4756, 4822",
+        "pages": [
+          57
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net income"
+            ]
+          },
+          {
+            "number": "4756"
+          },
+          {
+            "number": "4822"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_10499",
+    "document_id": "KRAFTHEINZ_2019_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Cost of products sold / 16830",
+        "pages": [
+          50
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Cost of products sold"
+            ]
+          },
+          {
+            "number": "16830"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Inventories / 2721, 2667",
+        "pages": [
+          52
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Inventories"
+            ]
+          },
+          {
+            "number": "2721"
+          },
+          {
+            "number": "2667"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00723",
+    "document_id": "AMERICANEXPRESS_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net interest income / 9895",
+        "pages": [
+          96
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net interest income"
+            ]
+          },
+          {
+            "number": "9895"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total provisions for credit losses / 2182",
+        "pages": [
+          96
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total provisions for credit losses"
+            ]
+          },
+          {
+            "number": "2182"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": "仅核验金融企业报表结构的支持依据；不能自动证明某指标不适用。"
+  },
+  {
+    "id": "financebench_id_00601",
+    "document_id": "ULTABEAUTY_2023Q4_EARNINGS",
+    "units": [
+      {
+        "id": "u1",
+        "label": "营销费用降低",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "lower marketing expenses"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u2",
+        "label": "销售增长摊薄激励薪酬",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "leverage of incentive compensation due to higher sales"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": "题目 FY2023 对应截至 2023-01-28 的公司 FY2022。"
+  },
+  {
+    "id": "financebench_id_04103",
+    "document_id": "GENERALMILLS_2019_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net sales / 16865.2",
+        "pages": [
+          53
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net sales"
+            ]
+          },
+          {
+            "number": "16865.2"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Cost of sales / 11108.4",
+        "pages": [
+          53
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Cost of sales"
+            ]
+          },
+          {
+            "number": "11108.4"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Inventories / 1559.3, 1642.2",
+        "pages": [
+          55
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Inventories"
+            ]
+          },
+          {
+            "number": "1559.3"
+          },
+          {
+            "number": "1642.2"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u4",
+        "label": "Receivables / 1679.7, 1684.2",
+        "pages": [
+          55
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Receivables"
+            ]
+          },
+          {
+            "number": "1679.7"
+          },
+          {
+            "number": "1684.2"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u5",
+        "label": "Accounts payable / 2854.1, 2746.2",
+        "pages": [
+          55
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Accounts payable"
+            ]
+          },
+          {
+            "number": "2854.1"
+          },
+          {
+            "number": "2746.2"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00499",
+    "document_id": "3M_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net sales / 34229",
+        "pages": [
+          48
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net sales"
+            ]
+          },
+          {
+            "number": "34229"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Property plant and equipment net / 9178",
+        "pages": [
+          50
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Property plant and equipment net"
+            ]
+          },
+          {
+            "number": "9178"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Total assets / 46455",
+        "pages": [
+          50
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total assets"
+            ]
+          },
+          {
+            "number": "46455"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u4",
+        "label": "Purchases of property plant and equipment / 1749",
+        "pages": [
+          52
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Purchases of property plant and equipment"
+            ]
+          },
+          {
+            "number": "1749"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": "仅检验参考判断所需的财务输入，不判定资本密集型的阈值。参考节选缺归母净利润，ROA 输入不完整。"
+  },
+  {
+    "id": "financebench_id_00302",
+    "document_id": "PFIZER_2021_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Property plant and equipment / 14882, 13745",
+        "pages": [
+          59
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Property plant and equipment"
+            ]
+          },
+          {
+            "number": "14882"
+          },
+          {
+            "number": "13745"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_10130",
+    "document_id": "CORNING_2020_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Cost of sales / 7772",
+        "pages": [
+          70
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Cost of sales"
+            ]
+          },
+          {
+            "number": "7772"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Inventories / 2438, 2320",
+        "pages": [
+          72
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Inventories"
+            ]
+          },
+          {
+            "number": "2438"
+          },
+          {
+            "number": "2320"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Accounts payable / 1174, 1587",
+        "pages": [
+          72
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Accounts payable"
+            ]
+          },
+          {
+            "number": "1174"
+          },
+          {
+            "number": "1587"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_04209",
+    "document_id": "COSTCO_2021_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total assets / 59268",
+        "pages": [
+          38
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total assets"
+            ]
+          },
+          {
+            "number": "59268"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_04417",
+    "document_id": "BESTBUY_2019_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Merchandise inventories / 5409",
+        "pages": [
+          52
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Merchandise inventories"
+            ]
+          },
+          {
+            "number": "5409"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_04735",
+    "document_id": "ADOBE_2015_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total current liabilities / 2213556",
+        "pages": [
+          59
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total current liabilities"
+            ]
+          },
+          {
+            "number": "2213556"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Net cash provided by operating activities / 1469502",
+        "pages": [
+          63
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net cash provided by operating activities"
+            ]
+          },
+          {
+            "number": "1469502"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_03473",
+    "document_id": "COCACOLA_2017_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net income attributable to shareowners / 1248",
+        "pages": [
+          74
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net income attributable to shareowners"
+            ]
+          },
+          {
+            "number": "1248"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total assets / 87896, 87270",
+        "pages": [
+          76
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total assets"
+            ]
+          },
+          {
+            "number": "87896"
+          },
+          {
+            "number": "87270"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_08286",
+    "document_id": "AMAZON_2019_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net income / 11588",
+        "pages": [
+          38
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net income"
+            ]
+          },
+          {
+            "number": "11588"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_03849",
+    "document_id": "MGMRESORTS_2020_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Revenues / 5162082, 12899672, 11763096",
+        "pages": [
+          65
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Revenues"
+            ]
+          },
+          {
+            "number": "5162082"
+          },
+          {
+            "number": "12899672"
+          },
+          {
+            "number": "11763096"
+          }
+        ],
+        "max_span": 650,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Capital expenditures net of construction payable / 270579, 739006, 1486843",
+        "pages": [
+          67
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Capital expenditures net of construction payable"
+            ]
+          },
+          {
+            "number": "270579"
+          },
+          {
+            "number": "739006"
+          },
+          {
+            "number": "1486843"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_04784",
+    "document_id": "WALMART_2019_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Operating income / 21957, 20437",
+        "pages": [
+          48
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Operating income"
+            ]
+          },
+          {
+            "number": "21957"
+          },
+          {
+            "number": "20437"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total revenues / 514405, 500343",
+        "pages": [
+          48
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total revenues"
+            ]
+          },
+          {
+            "number": "514405"
+          },
+          {
+            "number": "500343"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_03031",
+    "document_id": "LOCKHEEDMARTIN_2021_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total current assets / 19815",
+        "pages": [
+          68
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total current assets"
+            ]
+          },
+          {
+            "number": "19815"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total current liabilities / 13997",
+        "pages": [
+          68
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total current liabilities"
+            ]
+          },
+          {
+            "number": "13997"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_09724",
+    "document_id": "COCACOLA_2021_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Cost of goods sold / 15357",
+        "pages": [
+          62
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Cost of goods sold"
+            ]
+          },
+          {
+            "number": "15357"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Net operating revenues / 38655",
+        "pages": [
+          62
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net operating revenues"
+            ]
+          },
+          {
+            "number": "38655"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_04854",
+    "document_id": "GENERALMILLS_2020_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net cash provided by operating activities / 3676.2",
+        "pages": [
+          52
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net cash provided by operating activities"
+            ]
+          },
+          {
+            "number": "3676.2"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Purchases of land buildings and equipment / 460.8",
+        "pages": [
+          52
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Purchases of land buildings and equipment"
+            ]
+          },
+          {
+            "number": "460.8"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_02987",
+    "document_id": "ACTIVISIONBLIZZARD_2019_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Property and equipment net / 253, 282",
+        "pages": [
+          69
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Property and equipment net"
+            ]
+          },
+          {
+            "number": "253"
+          },
+          {
+            "number": "282"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total net revenues / 6489",
+        "pages": [
+          70
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total net revenues"
+            ]
+          },
+          {
+            "number": "6489"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_08135",
+    "document_id": "AMAZON_2017_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total net sales / 135987, 177866",
+        "pages": [
+          38
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total net sales"
+            ]
+          },
+          {
+            "number": "135987"
+          },
+          {
+            "number": "177866"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_03069",
+    "document_id": "AMD_2015_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net revenue / 3991",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net revenue"
+            ]
+          },
+          {
+            "number": "3991"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Depreciation and amortization / 167",
+        "pages": [
+          60
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Depreciation and amortization"
+            ]
+          },
+          {
+            "number": "167"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00807",
+    "document_id": "3M_2023Q2_10Q",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total current assets / 15754",
+        "pages": [
+          5
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total current assets"
+            ]
+          },
+          {
+            "number": "15754"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total inventories / 5280",
+        "pages": [
+          5
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total inventories"
+            ]
+          },
+          {
+            "number": "5280"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Total current liabilities / 10936",
+        "pages": [
+          5
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total current liabilities"
+            ]
+          },
+          {
+            "number": "10936"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": "参考 quick ratio 采用 (current assets - inventory) / current liabilities，未扣预付款。"
+  },
+  {
+    "id": "financebench_id_00720",
+    "document_id": "AMERICANEXPRESS_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net interest income / 9895",
+        "pages": [
+          96
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net interest income"
+            ]
+          },
+          {
+            "number": "9895"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total provisions for credit losses / 2182",
+        "pages": [
+          96
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total provisions for credit losses"
+            ]
+          },
+          {
+            "number": "2182"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": "仅检验金融企业报表结构的支持依据；不能自动证明不存在或不适用 gross margin。"
+  },
+  {
+    "id": "financebench_id_01275",
+    "document_id": "BESTBUY_2023_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total cash provided by operating activities / 1824",
+        "pages": [
+          42
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total cash provided by operating activities"
+            ]
+          },
+          {
+            "number": "1824"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total cash used in investing activities / 962",
+        "pages": [
+          42
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total cash used in investing activities"
+            ]
+          },
+          {
+            "number": "962"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Total cash used in financing activities / 1806",
+        "pages": [
+          42
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total cash used in financing activities"
+            ]
+          },
+          {
+            "number": "1806"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_01226",
+    "document_id": "3M_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "耳塞诉讼费用",
+        "pages": [
+          27
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Combat Arms Earplugs litigation"
+            ]
+          },
+          {
+            "phrases": [
+              "charge"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u2",
+        "label": "退出 PFAS 的减值",
+        "pages": [
+          27
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "impairment costs related to exiting PFAS"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u3",
+        "label": "退出俄罗斯费用",
+        "pages": [
+          27
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "costs related to exiting Russia"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u4",
+        "label": "剥离相关重组费用",
+        "pages": [
+          27
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "divestiture related restructuring charges"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": "参考节选仅含 SG&A 上升原因，未完整覆盖答案中的 gross margin / 1.7% 变化；规则只核验所给支持依据。"
+  },
+  {
+    "id": "financebench_id_00222",
+    "document_id": "AMD_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Cash and cash equivalents / 4835",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Cash and cash equivalents"
+            ]
+          },
+          {
+            "number": "4835"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Short term investments / 1020",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Short term investments"
+            ]
+          },
+          {
+            "number": "1020"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Accounts receivable / 4126",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Accounts receivable"
+            ]
+          },
+          {
+            "number": "4126"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u4",
+        "label": "Receivables from related parties / 2",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Receivables from related parties"
+            ]
+          },
+          {
+            "number": "2"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u5",
+        "label": "Total current liabilities / 6369",
+        "pages": [
+          56
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total current liabilities"
+            ]
+          },
+          {
+            "number": "6369"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00566",
+    "document_id": "VERIZON_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total debt / 150639, 150868",
+        "pages": [
+          77
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total debt"
+            ]
+          },
+          {
+            "number": "150639"
+          },
+          {
+            "number": "150868"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00521",
+    "document_id": "ULTABEAUTY_2023_10K",
+    "units": [],
+    "manual_required": true,
+    "note": "需人工核对 FY2023/FY2022 收购行的空白/破折号及年份列。文本缺数值不等于没有收购；不参与自动内容指标分母。"
+  },
+  {
+    "id": "financebench_id_00711",
+    "document_id": "JOHNSON_JOHNSON_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Inventories / 12483, 10387",
+        "pages": [
+          46
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Inventories"
+            ]
+          },
+          {
+            "number": "12483"
+          },
+          {
+            "number": "10387"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Cost of products sold / 31089",
+        "pages": [
+          47
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Cost of products sold"
+            ]
+          },
+          {
+            "number": "31089"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00735",
+    "document_id": "PEPSICO_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "诉讼最终结果预计不会有重大不利影响",
+        "pages": [
+          26
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "litigation"
+            ]
+          },
+          {
+            "phrases": [
+              "will not have a material adverse effect"
+            ]
+          }
+        ],
+        "max_span": 650,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_01079",
+    "document_id": "AMCOR_2023_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "捷克包装厂收购",
+        "pages": [
+          64
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "acquisition"
+            ]
+          },
+          {
+            "phrases": [
+              "Czech Republic"
+            ]
+          },
+          {
+            "phrases": [
+              "flexible packaging"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u2",
+        "label": "上海医疗包装收购",
+        "pages": [
+          64
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "acquisition"
+            ]
+          },
+          {
+            "phrases": [
+              "medical device packaging"
+            ]
+          },
+          {
+            "phrases": [
+              "Shanghai China"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u3",
+        "label": "新西兰蛋白包装机器收购",
+        "pages": [
+          64
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "acquisition"
+            ]
+          },
+          {
+            "phrases": [
+              "New Zealand"
+            ]
+          },
+          {
+            "phrases": [
+              "protein packaging machines"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": "问题涵盖三年，但给定答案和证据只列 FY2023 的三次收购；只核验已给参考依据。"
+  },
+  {
+    "id": "financebench_id_01290",
+    "document_id": "BOEING_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "商业航空客户集中",
+        "pages": [
+          8
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "limited number"
+            ]
+          },
+          {
+            "phrases": [
+              "airlines"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u2",
+        "label": "美国政府客户",
+        "pages": [
+          10
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "revenue from the U S government"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u3",
+        "label": "政府合同收入占比",
+        "pages": [
+          14
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "40"
+            ]
+          },
+          {
+            "phrases": [
+              "revenues were earned pursuant to U S government contracts"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_01028",
+    "document_id": "AMERICANEXPRESS_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "运营地域及收入表",
+        "pages": [
+          155
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "United States"
+            ]
+          },
+          {
+            "phrases": [
+              "EMEA"
+            ]
+          },
+          {
+            "phrases": [
+              "APAC"
+            ]
+          },
+          {
+            "phrases": [
+              "LACC"
+            ]
+          },
+          {
+            "phrases": [
+              "Total revenues net of interest expense"
+            ]
+          }
+        ],
+        "max_span": 350,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00790",
+    "document_id": "CVSHEALTH_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Net income / 4165, 7898",
+        "pages": [
+          108
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Net income"
+            ]
+          },
+          {
+            "number": "4165"
+          },
+          {
+            "number": "7898"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Total assets / 228275, 232999",
+        "pages": [
+          110
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total assets"
+            ]
+          },
+          {
+            "number": "228275"
+          },
+          {
+            "number": "232999"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Property and equipment net / 12873",
+        "pages": [
+          110
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Property and equipment net"
+            ]
+          },
+          {
+            "number": "12873"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u4",
+        "label": "Goodwill / 78150",
+        "pages": [
+          110
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Goodwill"
+            ]
+          },
+          {
+            "number": "78150"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": "核验参考判断的财务输入，不自动判定资本密集程度。"
+  },
+  {
+    "id": "financebench_id_00080",
+    "document_id": "PAYPAL_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Accounts receivable net / 963",
+        "pages": [
+          61
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Accounts receivable net"
+            ]
+          },
+          {
+            "number": "963"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Loans and interest receivable / 7431",
+        "pages": [
+          61
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Loans and interest receivable"
+            ]
+          },
+          {
+            "number": "7431"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Funds receivable and customer accounts / 36357",
+        "pages": [
+          61
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Funds receivable and customer accounts"
+            ]
+          },
+          {
+            "number": "36357"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u4",
+        "label": "Prepaid expenses and other current assets / 1898",
+        "pages": [
+          61
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Prepaid expenses and other current assets"
+            ]
+          },
+          {
+            "number": "1898"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u5",
+        "label": "Accounts payable / 126",
+        "pages": [
+          61
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Accounts payable"
+            ]
+          },
+          {
+            "number": "126"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u6",
+        "label": "Funds payable and amounts due to customers / 40107",
+        "pages": [
+          61
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Funds payable and amounts due to customers"
+            ]
+          },
+          {
+            "number": "40107"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u7",
+        "label": "Accrued expenses and other current liabilities / 4055",
+        "pages": [
+          61
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Accrued expenses and other current liabilities"
+            ]
+          },
+          {
+            "number": "4055"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u8",
+        "label": "Income taxes payable / 813",
+        "pages": [
+          61
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Income taxes payable"
+            ]
+          },
+          {
+            "number": "813"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": "参考答案用非现金营运资本定义，和通常的 current assets-current liabilities 不同。"
+  },
+  {
+    "id": "financebench_id_01911",
+    "document_id": "MGMRESORTS_2022Q4_EARNINGS",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Adjusted EBITDAR / 3497254",
+        "pages": [
+          14
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Adjusted EBITDAR"
+            ]
+          },
+          {
+            "number": "3497254"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Depreciation and amortization / 3482050",
+        "pages": [
+          14
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Depreciation and amortization"
+            ]
+          },
+          {
+            "number": "3482050"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Triple net operating lease and ground lease rent expense / 1950566",
+        "pages": [
+          14
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Triple net operating lease and ground lease rent expense"
+            ]
+          },
+          {
+            "number": "1950566"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u4",
+        "label": "Interest expense net of amounts capitalized / 594954",
+        "pages": [
+          14
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Interest expense net of amounts capitalized"
+            ]
+          },
+          {
+            "number": "594954"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": "参考答案将负覆盖率表述为零；只核验输入，不认可该截零口径为通用公式。"
+  },
+  {
+    "id": "financebench_id_01928",
+    "document_id": "AMCOR_2023Q4_EARNINGS",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Adjusted EBITDA EBIT Net income and EPS / 2018",
+        "pages": [
+          12
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Adjusted EBITDA EBIT Net income and EPS"
+            ]
+          },
+          {
+            "number": "2018"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00288",
+    "document_id": "BESTBUY_2024Q2_10Q",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Cash and cash equivalents / 1093, 1874",
+        "pages": [
+          20
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Cash and cash equivalents"
+            ]
+          },
+          {
+            "number": "1093"
+          },
+          {
+            "number": "1874"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00464",
+    "document_id": "BOEING_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "航空业的周期与利润波动",
+        "pages": [
+          8
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "airline industry has been cyclical"
+            ]
+          },
+          {
+            "phrases": [
+              "significant profit swings"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_01935",
+    "document_id": "AMCOR_2022_8K_dated-2022-07-01",
+    "units": [
+      {
+        "id": "u1",
+        "label": "发行人双方",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Amcor Finance USA"
+            ]
+          },
+          {
+            "phrases": [
+              "Amcor Flexibles North America"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u2",
+        "label": "2026 / 2028 担保票据",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Guaranteed Senior Notes due 2026"
+            ]
+          },
+          {
+            "phrases": [
+              "Guaranteed Senior Notes due 2028"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u3",
+        "label": "替换发行人并承接契约",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "substitution of the Substitute Issuer for the Former Issuer"
+            ]
+          },
+          {
+            "phrases": [
+              "assumption by the Substitute Issuer of the covenants"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00705",
+    "document_id": "PEPSICO_2023_8K_dated-2023-05-30",
+    "units": [
+      {
+        "id": "u1",
+        "label": "旧五年额度 38 亿",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "3800000000 five year unsecured revolving credit agreement"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u2",
+        "label": "新五年额度 42 亿",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "4200000000 five year unsecured revolving credit agreement"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_01865",
+    "document_id": "3M_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Consumer 有机增速为负 0.9%",
+        "pages": [
+          25
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Organic sales"
+            ]
+          },
+          {
+            "phrases": [
+              "Consumer"
+            ]
+          },
+          {
+            "number": "0.9"
+          },
+          {
+            "regex": "Consumer[\\W_]*\\(\\s*0\\.9\\s*\\)"
+          }
+        ],
+        "max_span": 550,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_01964",
+    "document_id": "AMERICANEXPRESS_2022_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Customer deposits / 110239",
+        "pages": [
+          98
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Customer deposits"
+            ]
+          },
+          {
+            "number": "110239"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Accounts payable / 12133",
+        "pages": [
+          98
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Accounts payable"
+            ]
+          },
+          {
+            "number": "12133"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u3",
+        "label": "Short term borrowings / 1348",
+        "pages": [
+          98
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Short term borrowings"
+            ]
+          },
+          {
+            "number": "1348"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u4",
+        "label": "Long term debt / 42573",
+        "pages": [
+          98
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Long term debt"
+            ]
+          },
+          {
+            "number": "42573"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u5",
+        "label": "Other liabilities / 37350",
+        "pages": [
+          98
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Other liabilities"
+            ]
+          },
+          {
+            "number": "37350"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_02024",
+    "document_id": "VERIZON_2021_10K",
+    "units": [
+      {
+        "id": "u1",
+        "label": "2024 两类退休福利 1,097 / 862 及对应表头",
+        "pages": [
+          94
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "2024"
+            ]
+          },
+          {
+            "number": "1097"
+          },
+          {
+            "number": "862"
+          },
+          {
+            "phrases": [
+              "Pension Benefits"
+            ]
+          },
+          {
+            "phrases": [
+              "Health Care and Life"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_01491",
+    "document_id": "JOHNSON_JOHNSON_2023_8K_dated-2023-08-30",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Kenvue 分离现金收入 132 亿",
+        "pages": [
+          4
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "13.2 billion in cash proceeds"
+            ]
+          },
+          {
+            "phrases": [
+              "Kenvue"
+            ]
+          }
+        ],
+        "max_span": 160,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_01912",
+    "document_id": "MGMRESORTS_2022Q4_EARNINGS",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Las Vegas 全年收入增长 77%",
+        "pages": [
+          3
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Las Vegas Strip Resorts"
+            ]
+          },
+          {
+            "phrases": [
+              "increase of 77"
+            ]
+          }
+        ],
+        "max_span": 320,
+        "values_after_label": false
+      },
+      {
+        "id": "u2",
+        "label": "Regional 全年收入增长 12%",
+        "pages": [
+          4
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Regional Operations"
+            ]
+          },
+          {
+            "phrases": [
+              "increase of 12"
+            ]
+          }
+        ],
+        "max_span": 320,
+        "values_after_label": false
+      },
+      {
+        "id": "u3",
+        "label": "China 全年收入下降 44%",
+        "pages": [
+          4
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "MGM China"
+            ]
+          },
+          {
+            "phrases": [
+              "decrease of 44"
+            ]
+          }
+        ],
+        "max_span": 320,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00882",
+    "document_id": "PEPSICO_2023_8K_dated-2023-05-30",
+    "units": [
+      {
+        "id": "u1",
+        "label": "新 364 天额度 42 亿",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "4200000000 364 day unsecured revolving credit agreement"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      },
+      {
+        "id": "u2",
+        "label": "新五年额度 42 亿",
+        "pages": [
+          2
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "4200000000 five year unsecured revolving credit agreement"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  },
+  {
+    "id": "financebench_id_00299",
+    "document_id": "JPMORGAN_2021Q1_10Q",
+    "units": [
+      {
+        "id": "u1",
+        "label": "Total net revenue / 12517, 14605, 2393",
+        "pages": [
+          19
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total net revenue"
+            ]
+          },
+          {
+            "number": "12517"
+          },
+          {
+            "number": "14605"
+          },
+          {
+            "number": "2393"
+          }
+        ],
+        "max_span": 240,
+        "values_after_label": true
+      },
+      {
+        "id": "u2",
+        "label": "Corporate 列及负 473，与 Asset & Wealth 4,077 对照",
+        "pages": [
+          19
+        ],
+        "anchors": [
+          {
+            "phrases": [
+              "Total net revenue"
+            ]
+          },
+          {
+            "number": "4077"
+          },
+          {
+            "number": "473"
+          },
+          {
+            "regex": "\\(\\s*473\\s*\\)"
+          },
+          {
+            "phrases": [
+              "Asset Wealth Management"
+            ]
+          },
+          {
+            "phrases": [
+              "Corporate"
+            ]
+          }
+        ],
+        "max_span": 500,
+        "values_after_label": false
+      }
+    ],
+    "manual_required": false,
+    "note": ""
+  }
+]

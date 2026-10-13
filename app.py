@@ -1,4 +1,4 @@
-"""本地 HTML 多 PDF 问答服务。运行 uv run app.py，打开 127.0.0.1:8000。"""
+"""本地 HTML 多格式文档问答服务。运行 uv run app.py，打开 127.0.0.1:8000。"""
 import hashlib
 import os
 import secrets
@@ -25,9 +25,9 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from financial_rag.ingestion.parser import parse_pdf
-from financial_rag.ingestion.normalizer import normalize_pages
-from financial_rag.ingestion.chunker import chunk_pages
+from financial_rag.ingestion.adapters import parse_document
+from financial_rag.ingestion.structured_chunker import chunk_document
+from financial_rag.ingestion.document import provenance
 from financial_rag.indexing.vector_store import VectorStore
 from financial_rag.pipeline import FinancialRAG
 from financial_rag.memory import ConversationMemory
@@ -123,6 +123,12 @@ def models():
     )
 
 
+@lru_cache(maxsize=1)
+def document_tokenizer():
+    from transformers import AutoTokenizer
+    return AutoTokenizer.from_pretrained(ROOT / "models/bge-small-en-v1.5", local_files_only=True)
+
+
 def build_workspace(files, previous=None):
     """在临时工作区追加新文档，成功后才切换；复用旧文档向量。"""
     folder = tempfile.TemporaryDirectory(prefix="rag_web_")
@@ -135,42 +141,52 @@ def build_workspace(files, previous=None):
         total = 0
         library_size = sum(d['size_bytes'] for d in documents)
         if previous:
-            for document_id in names:
-                shutil.copyfile(Path(previous['folder'].name)/f"{document_id}.pdf",
-                                Path(folder.name)/f"{document_id}.pdf")
+            for old_path in Path(previous['folder'].name).iterdir():
+                if old_path.suffix in {'.pdf', '.docx', '.xlsx', '.json'}:
+                    shutil.copyfile(old_path, Path(folder.name)/old_path.name)
+        parsed = []
         for file in files:
             name = Path(file.filename or "").name
-            if not name.lower().endswith(".pdf"):
-                raise ValueError("只支持 PDF 文件")
+            if Path(name).suffix.lower() not in {".pdf", ".docx", ".xlsx"}:
+                raise ValueError("只支持 PDF、Word (.docx)、Excel (.xlsx) 文件")
             data = file.file.read(20*1024*1024+1)
             total += len(data)
             if not data or len(data)>20*1024*1024 or total>100*1024*1024:
-                raise ValueError("每份 PDF 须为 1 字节至 20 MB，合计不超过 100 MB")
+                raise ValueError("每份文档须为 1 字节至 20 MB，合计不超过 100 MB")
             document_id = hashlib.sha256(data).hexdigest()
             if document_id in seen:
                 continue
             if len(documents) >= 10 or library_size + len(data) > 100*1024*1024:
-                raise ValueError("追加后资料库最多 10 份 PDF，合计不超过 100 MB；请先清空或减少新增文件")
+                raise ValueError("追加后资料库最多 10 份文档，合计不超过 100 MB；请先清空或减少新增文件")
             library_size += len(data)
             seen.add(document_id)
-            path = Path(folder.name)/f"{document_id}.pdf"
+            path = Path(folder.name)/f"{document_id}{Path(name).suffix.lower()}"
             path.write_bytes(data)
             try:
-                pages = parse_pdf(path)
-            except Exception:
-                raise ValueError(f"无法读取 {name}，请检查是否损坏或加密") from None
-            new_chunks = chunk_pages(normalize_pages(pages), document_id, 500, 80)
-            if not new_chunks:
-                raise ValueError(f"{name} 没有可提取文字，扫描件暂不支持")
-            # 将可读文件名交给生成模型，支持跨文件区分来源。
-            for chunk in new_chunks:
-                chunk["title"] = name
-            chunks.extend(new_chunks)
+                document = parse_document(path, name)
+            except Exception as exc:
+                raise ValueError(f"无法读取 {name}，请检查是否损坏、加密或超出解析限制：{exc}") from None
+            if not document.elements:
+                reason = "需 OCR，尚未接入识别模型" if document.ocr_requests else "没有可检索的正文或表格"
+                raise ValueError(f"{name}：{reason}")
+            (Path(folder.name)/f"{document_id}.json").write_text(document.model_dump_json(indent=2), encoding="utf-8")
+            parsed.append(document)
             names[document_id] = name
-            documents.append(dict(name=name, size_bytes=len(data), pages=len(pages), empty_pages=sum(not page['text'].strip() for page in pages)))
-        if previous and len(chunks) == old_count:
+            documents.append(dict(document_id=document_id,name=name,format=document.format,size_bytes=len(data),
+                pages=document.page_count,sheets=document.sheets,tables=len(document.tables),
+                empty_pages=len({r.page for r in document.ocr_requests}),
+                ocr_status="needs_ocr" if document.ocr_requests else "not_requested",warnings=document.warnings))
+        if previous and not parsed:
             folder.cleanup()
             return previous
+        tokenizer = document_tokenizer()
+        for document in parsed:
+            new_chunks = chunk_document(document, tokenizer, 300)
+            if not new_chunks:
+                raise ValueError(f"{document.filename} 没有可索引的有效正文或表格")
+            chunks.extend(new_chunks)
+        if len(chunks) == old_count:
+            raise ValueError("没有可索引的文字；OCR 尚未接入")
         embedding, reranker = models()
         store = VectorStore(Path(folder.name)/"vectors.sqlite3")
         new_vectors = embedding.encode_documents([c['text'] for c in chunks[old_count:]])
@@ -198,6 +214,29 @@ def status(request: Request):
         return dict(documents=state['documents'] if state else [], key_ready=bool(os.getenv('DEEPSEEK_API_KEY')))
 
 
+@app.get("/api/documents/{document_id}/structure")
+def document_structure(document_id: str, request: Request):
+    with lock:
+        state = workspaces.get(request.session.get("id"))
+        if not state or document_id not in state['names']:
+            raise HTTPException(404, "文档不存在")
+        return json.loads((Path(state['folder'].name)/f"{document_id}.json").read_text())
+
+
+@app.get("/api/documents/{document_id}/original")
+def document_original(document_id: str, request: Request):
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    with lock:
+        state = workspaces.get(request.session.get("id"))
+        if not state or document_id not in state['names']:
+            raise HTTPException(404, "文档不存在")
+        name = state['names'][document_id]
+        path = Path(state['folder'].name)/f"{document_id}{Path(name).suffix.lower()}"
+        return Response(path.read_bytes(),media_type="application/octet-stream",
+            headers={"Content-Disposition": "attachment; filename*=UTF-8''"+quote(name, safe='')})
+
+
 @app.post("/api/upload")
 async def upload(request: Request):
     if not os.getenv("DEEPSEEK_API_KEY"):
@@ -206,7 +245,7 @@ async def upload(request: Request):
     async with request.form(max_files=10, max_fields=0) as form:
         files = form.getlist("files")
         if not 1 <= len(files) <= 10 or any(not hasattr(file, "file") for file in files):
-            return error_response("请选择 1–10 份 PDF")
+            return error_response("请选择 1–10 份 PDF、Word 或 Excel")
         return await run_in_threadpool(process_upload, files, request.session['id'])
 
 
@@ -267,7 +306,7 @@ def evidence_history(result, names):
             item = result['evidence'][key]
             evidence.append({
                 'chunk_id': key, 'citation_id': item['citation_id'],
-                'filename': names[item['document_id']], 'page': item['page'],
+                'filename': names[item['document_id']], 'page': item['page'], **provenance(item),
                 'text': item['text'], 'rank': ranks[key], 'used_in_answer': key in used,
             })
         history.append({**record, 'evidence': evidence})
@@ -281,7 +320,7 @@ def ask(body: QuestionRequest, request: Request):
     with lock:
         state = workspaces.get(request.session.get('id'))
         if not state:
-            return error_response("请先上传并阅读 PDF")
+            return error_response("请先上传并阅读文档")
         try:
             result = state['rag'].ask_agent(question, **conversation_options(state))
             if result['status'] == 'error':
@@ -310,7 +349,7 @@ def ask_stream(body: QuestionRequest, request: Request):
     question = body.question
     session_id = request.session.get('id')
     if session_id not in workspaces:
-        return error_response("请先上传并阅读 PDF")
+        return error_response("请先上传并阅读文档")
     events = queue.Queue(maxsize=128)
     cancelled = threading.Event()
     delivered = threading.Event()

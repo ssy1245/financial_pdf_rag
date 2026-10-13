@@ -2,3 +2,5 @@
 #pending li{display:flex;align-items:center;justify-content:space-between;gap:10px}#pending li span{min-width:0}#pending .text-button{flex-shrink:0}
 
 .evidence-card{border-left:3px solid #d8e5de;padding:8px 12px;margin:12px 0;background:#f8faf9}.evidence-heading{font-weight:600;color:#356e58}.evidence-preview{white-space:pre-wrap}details .evidence-heading,details .evidence-preview{max-height:none;overflow:visible}
+
+.document-structure table{border-collapse:collapse;font-size:12px;margin:10px 0}.document-structure td{border:1px solid #ccc;padding:6px;white-space:pre-wrap;min-width:60px}.document-structure{max-width:100%;padding:8px}.document-structure a{display:block;margin-top:8px}

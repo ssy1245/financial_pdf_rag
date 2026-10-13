@@ -100,7 +100,7 @@ def main():
         print(f"Agent 状态：{result['status']}；停止原因：{result['stop_reason']}")
     print("\n引用来源：")
     for source in result["sources"]:
-        print(f"[{source['label']}] {source['document_id']} | PDF 第 {source['page']} 页 | {source['chunk_id']}")
+        print(f"[{source['label']}] {source['document_id']} | {source.get('source_label', 'PDF 第 '+str(source['page'])+' 页')} | {source['chunk_id']}")
     if result["unknown_citations"]:
         raise SystemExit("引用检查失败：" + ", ".join(result["unknown_citations"]))
     if not result["has_citations"]:

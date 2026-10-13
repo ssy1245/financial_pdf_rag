@@ -6,6 +6,8 @@
 同分保持字典插入顺序（先 Dense，后仅 BM25 的项）。不使用原始分数相加。
 限制：默认 chunk_id 全局唯一；本函数尚无独立的参数和重复 ID 防御校验。
 """
+from financial_rag.ingestion.document import provenance
+
 def reciprocal_rank_fusion(
     dense_results: list[dict],
     bm25_results: list[dict],
@@ -17,6 +19,7 @@ def reciprocal_rank_fusion(
         chunk_id = result["chunk_id"]
         rrf_results[chunk_id] = {
             "chunk_id": chunk_id,
+                **provenance(result),
             "page": result["page"],
             "text": result["text"],
             "dense_rank": rank,
@@ -29,6 +32,7 @@ def reciprocal_rank_fusion(
         if chunk_id not in rrf_results:
             rrf_results[chunk_id] = {
                 "chunk_id": chunk_id,
+                **provenance(result),
                 "page": result["page"],
                 "text": result["text"],
                 "dense_rank": None,

@@ -19,7 +19,7 @@ async function streamAnswer(question,onEvent){
     if(!result)throw Error('连接中断，回答尚未完成');return result;
   }finally{await reader.cancel();reader.releaseLock()}
 }
-function showDocuments(documents){ready=documents.length>0;$('documents').replaceChildren();for(const d of documents){const li=document.createElement('li');li.textContent=`▤ ${d.name} · ${d.pages} 页${d.empty_pages?' · '+d.empty_pages+' 页无文字':''}`;$('documents').append(li)}if(!ready){const li=document.createElement('li');li.textContent='还没有文档';$('documents').append(li)}controls()}
+function showDocuments(documents){ready=documents.length>0;$('documents').replaceChildren();for(const d of documents){const li=document.createElement('li');li.textContent=`▤ ${d.name} · ${d.pages!=null?d.pages+' 页':(d.sheets?.length?d.sheets.length+' 张工作表':'Word 正文')} · ${d.tables??0} 张表${d.empty_pages?' · '+d.empty_pages+' 页待 OCR 核验':''}`;if(d.document_id){const original=document.createElement('a');original.textContent=' 下载原文';original.href='/api/documents/'+encodeURIComponent(d.document_id)+'/original';li.append(original);const structure=document.createElement('button');structure.type='button';structure.textContent='查看结构';structure.className='text-button';structure.onclick=()=>showStructure(d.document_id,li);li.append(structure)}if(d.warnings?.length)li.title=d.warnings.join('\n');$('documents').append(li)}if(!ready){const li=document.createElement('li');li.textContent='还没有文档';$('documents').append(li)}controls()}
 function renderPending(){
   $('pending').replaceChildren();
   for(const file of selected){
@@ -33,7 +33,7 @@ function renderPending(){
 }
 function selectionStatus(){status(selected.length
   ?'待上传 '+selected.length+' 份文件，可继续添加。点击开始阅读，将追加到当前资料库，保留已阅读文档。'
-  :'尚未选择文件，请添加 PDF。')}
+  :'尚未选择文件，请添加 PDF、Word 或 Excel。')}
 function select(files){
   if(busy)return;
   const incoming=[...files];if(!incoming.length)return;
@@ -41,14 +41,14 @@ function select(files){
   const key=f=>JSON.stringify([f.name,f.size,f.lastModified]);
   const known=new Set(selected.map(key)),list=[...selected];
   for(const file of incoming){if(!known.has(key(file))){known.add(key(file));list.push(file)}}
-  if(list.length>10||list.some(f=>!f.name.toLowerCase().endsWith('.pdf')||f.size===0||f.size>20*1024*1024)||list.reduce((sum,f)=>sum+f.size,0)>100*1024*1024){
-    status('请选择最多 10 份非空 PDF，每份不超过 20 MB，合计不超过 100 MB；原待上传列表已保留。',true);return;
+  if(list.length>10||list.some(f=>!(/\.(pdf|docx|xlsx)$/i.test(f.name))||f.size===0||f.size>20*1024*1024)||list.reduce((sum,f)=>sum+f.size,0)>100*1024*1024){
+    status('请选择最多 10 份非空 PDF、DOCX 或 XLSX，每份不超过 20 MB，合计不超过 100 MB；原待上传列表已保留。',true);return;
   }
   selected=list;renderPending();selectionStatus();controls();
 }
 $('files').onchange=e=>{select(e.target.files);e.target.value=''};$('drop').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('files').click()}};
 for(const event of ['dragover','drop'])$('drop').addEventListener(event,e=>e.preventDefault());$('drop').ondragover=()=>$('drop').classList.add('drag');$('drop').ondragleave=()=>$('drop').classList.remove('drag');$('drop').ondrop=e=>{$('drop').classList.remove('drag');select(e.dataTransfer.files)};
-$('upload').onclick=async()=>{busy=true;controls();renderPending();status('正在读取文档并建立索引，首次从本地加载模型可能需要一些时间…');const form=new FormData();selected.forEach(f=>form.append('files',f));try{const data=await api('/api/upload',{method:'POST',body:form});showDocuments(data.documents);selected=[];$('pending').replaceChildren();$('files').value='';status('已准备好，可以针对这 '+data.documents.length+' 份 PDF 提问。资料库内容变化后会重新开始对话上下文。')}catch(e){status(e.message+'；已有资料库保持不变。',true)}finally{busy=false;renderPending();controls()}};
+$('upload').onclick=async()=>{busy=true;controls();renderPending();status('正在读取文档并建立索引，首次从本地加载模型可能需要一些时间…');const form=new FormData();selected.forEach(f=>form.append('files',f));try{const data=await api('/api/upload',{method:'POST',body:form});showDocuments(data.documents);selected=[];$('pending').replaceChildren();$('files').value='';status('已准备好，可以针对这 '+data.documents.length+' 份文档提问。资料库内容变化后会重新开始对话上下文。')}catch(e){status(e.message+'；已有资料库保持不变。',true)}finally{busy=false;renderPending();controls()}};
 function message(role,text){const box=document.createElement('article');box.className='message '+role;const title=document.createElement('h3');title.textContent=role==='user'?'你':'阅财 · AI';const body=document.createElement('div');body.textContent=text;box.append(title,body);$('chat').append(box);return box}
 $('form').onsubmit=async e=>{
   e.preventDefault();const question=$('question').value.trim();if(!question||busy||!ready)return;
@@ -71,8 +71,9 @@ $('form').onsubmit=async e=>{
     answerBody.textContent=data.answer;
     for(const source of data.sources){
       const details=document.createElement('details'),summary=document.createElement('summary'),text=document.createElement('p');
-      summary.textContent=`[${source.label}] ${source.filename} · PDF 第 ${source.page} 页`;
-      text.textContent=source.text;details.append(summary,text);box.append(details);
+      summary.textContent=`[${source.label}] ${source.filename} · ${source.source_label||('PDF 第 '+source.page+' 页')}`;
+      text.textContent=source.text;details.append(summary,text);
+      if(source.document_id){const view=document.createElement('button');view.type='button';view.textContent=source.table_id?'查看完整表格与来源':'查看文档结构';view.onclick=()=>showStructure(source.document_id,details,source.table_id);details.append(view)}box.append(details);
     }
     if(data.status!=='clarification'&&data.citation_status!=='labels_valid'){
       const warning=document.createElement('p');warning.className='warning';warning.textContent='引用缺失或编号异常，请核对原文。';box.append(warning);
@@ -104,7 +105,7 @@ $('form').onsubmit=async e=>{
       for(const item of round.evidence||[]){
         const card=document.createElement('div');card.className='evidence-card';
         const heading=document.createElement('p');heading.className='evidence-heading';
-        heading.textContent=`第 ${item.rank} 名 · [${item.citation_id}] ${item.filename} · PDF 第 ${item.page} 页 · ${item.used_in_answer?'回答已引用':'回答未引用'}`;
+        heading.textContent=`第 ${item.rank} 名 · [${item.citation_id}] ${item.filename} · ${item.source_label||('PDF 第 '+item.page+' 页')} · ${item.used_in_answer?'回答已引用':'回答未引用'}`;
         const preview=document.createElement('p');preview.className='evidence-preview';
         preview.textContent=item.text.slice(0,180)+(item.text.length>180?'…':'');
         const full=document.createElement('details'),title=document.createElement('summary'),text=document.createElement('p');
@@ -126,7 +127,7 @@ $('form').onsubmit=async e=>{
       const save=document.createElement('button'),saved=document.createElement('p');
       save.type='button';save.className='save-evaluation';save.textContent='保存检索评测资料';saved.className='hint';
       save.onclick=async()=>{
-        save.disabled=true;saved.textContent='正在保存 PDF、索引和完整检索记录…';
+        save.disabled=true;saved.textContent='正在保存原始文档、结构、索引和完整检索记录…';
         try{
           const result=await api('/api/runs/'+encodeURIComponent(data.run_id)+'/save',{
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({browser_elapsed_seconds:Number(seconds)})});
@@ -142,3 +143,25 @@ $('form').onsubmit=async e=>{
 };
 $('clear').onclick=async()=>{busy=true;controls();try{await api('/api/documents',{method:'DELETE'});showDocuments([]);$('chat').replaceChildren();status('资料库已清空。')}catch(e){status(e.message,true)}finally{busy=false;controls()}};
 api('/api/status').then(data=>{showDocuments(data.documents);if(!data.key_ready)status('请在项目 .env 配置 DEEPSEEK_API_KEY，然后重启服务。',true);else if(ready)status('资料库已就绪，可以继续提问。')}).catch(e=>status(e.message,true));
+
+async function showStructure(id,container,tableId){
+  try{
+    const doc=await api('/api/documents/'+encodeURIComponent(id)+'/structure');
+    container.querySelector('.document-structure')?.remove();
+    const panel=document.createElement('div');panel.className='document-structure';
+    const close=document.createElement('button');close.textContent='收起结构';close.onclick=()=>panel.remove();panel.append(close);
+    for(const warning of doc.warnings||[]){const note=document.createElement('p');note.className='hint';note.textContent=warning;panel.append(note)}
+    for(const request of doc.ocr_requests||[]){const note=document.createElement('p');note.textContent='待 OCR：第 '+request.page+' 页 · '+request.reason;panel.append(note)}
+    for(const t of doc.tables.filter(t=>!tableId||t.table_id===tableId)){
+      const title=document.createElement('p');title.textContent=t.table_id+' · '+(t.source.sheet? t.source.sheet+'!'+t.source.cell_range:t.source.page?'PDF 第 '+t.source.page+' 页':'Word 表 '+t.source.table);panel.append(title);
+      const scroller=document.createElement('div');scroller.style.overflowX='auto';const table=document.createElement('table');
+      // Bound DOM size; complete structured JSON remains available for large worksheets.
+      const maxRows=Math.min(t.rows,100),maxColumns=Math.min(t.columns,50),cells=new Map(),covered=new Set();
+      for(const cell of t.cells){cells.set(cell.row+':'+cell.column,cell);for(let r=cell.row;r<Math.min(cell.row+cell.row_span,maxRows+1);r++)for(let c=cell.column;c<Math.min(cell.column+cell.column_span,maxColumns+1);c++)if(r!==cell.row||c!==cell.column)covered.add(r+':'+c)}
+      for(let r=1;r<=maxRows;r++){const tr=document.createElement('tr');for(let c=1;c<=maxColumns;c++){if(covered.has(r+':'+c))continue;const cell=cells.get(r+':'+c),td=document.createElement('td');if(cell){td.textContent=cell.text;td.rowSpan=Math.min(cell.row_span,maxRows-r+1);td.colSpan=Math.min(cell.column_span,maxColumns-c+1);td.title=JSON.stringify(cell.source)+(cell.number_format?' · format: '+cell.number_format:'')}tr.append(td)}table.append(tr)}
+      scroller.append(table);panel.append(scroller);
+      if(t.rows>maxRows||t.columns>maxColumns){const note=document.createElement('p');note.textContent='预览限前 100 行、50 列；完整内容见结构 JSON。';panel.append(note)}
+    }
+    const link=document.createElement('a');link.href='/api/documents/'+encodeURIComponent(id)+'/structure';link.target='_blank';link.rel='noopener';link.textContent='打开完整结构 JSON（含段落、单元格和定位）';panel.append(link);container.append(panel);
+  }catch(error){status(error.message,true)}
+}

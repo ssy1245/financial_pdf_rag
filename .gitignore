@@ -1,5 +1,7 @@
 # Local environment and secrets
 .venv/
+.venv-*/
+venv/
 .env
 .env.*
 !.env.example
@@ -8,15 +10,27 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.ipynb_checkpoints/
 *.egg-info/
 dist/
 build/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 
 # Local IDE and operating system files
 .idea/
 .DS_Store
+._*
+Thumbs.db
+*.swp
+*.swo
 
 # Local documents and generated artifacts
 data/raw/
@@ -27,3 +41,13 @@ outputs/
 
 # Project-local model weights
 models/
+
+# Local runtime logs and download caches
+logs/
+*.log
+.cache/
+.huggingface/
+.paddlex/
+
+# Keep report navigation, experiment scripts, evaluation fixtures and uv.lock tracked.
+# Generated report assets and benchmark results live under outputs/.

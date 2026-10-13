@@ -1,6 +1,6 @@
 # Financial PDF RAG
 
-面向财报的 RAG 学习项目，当前已完成多 PDF 上传、检索、重排、DeepSeek 生成与引用展示。
+面向财报的 RAG 学习项目，当前已完成 PDF / Word (.docx) / Excel (.xlsx) 混合上传、结构化解析、检索、重排、DeepSeek 生成与来源展示。
 检索层已拆为独立 Retriever，支持按 chunk_id 排除已获取片段。
 已实现请求内证据记忆、search_documents 工具和显式 Agent loop；ask_agent() 可由模型选择补充检索。
 默认 ask() 保留单轮基线；网页已使用带单条初始查询规划的 ask_agent()。
@@ -17,7 +17,7 @@ uv run app.py
 后端为 FastAPI + Uvicorn，接口文档位于 http://127.0.0.1:8000/docs；也可运行 `uv run uvicorn app:app --host 127.0.0.1 --port 8000`。
 当前资料库和会话在进程内，请使用单 worker；共享模型仍通过锁串行执行。
 在项目 `.env` 设置 `DEEPSEEK_API_KEY`；FastAPI 入口自动加载，密钥只在后端使用。
-拖入/多选 PDF（可分次添加，待上传列表支持移除）→ 开始阅读 → 输入问题 → 展开文件名、PDF 页码和引用原文。
+拖入/多选 PDF、DOCX、XLSX（可分次添加）→ 开始阅读 → 输入问题 → 展开来源定位与原文；表格引用可查看完整结构。
 前端是 HTML/CSS/JavaScript，不需要 Node 构建，但必须启动 Python 后端，不能仅双击 HTML。
 
 - 资料库累计最多 10 份，每份 20 MB，总计 100 MB；跨批次同内容按哈希去重。重复上传不新增文档，清空按钮才会移除已有资料库。
@@ -31,9 +31,11 @@ uv run app.py
 
 | 文件/模块 | 已实现 | 主要限制 |
 |---|---|---|
-| ingestion/parser.py | PyMuPDF 文本块、坐标、物理页码 | 无 OCR、可靠表格结构恢复 |
+| ingestion/document.py、adapters.py | 统一运行时 schema、三种原生解析、表格单元格及格式专属来源 | PDF 无框表/跨页续表、Word 嵌套表等复杂结构尚待完善；OCR 仅接口 |
+| ingestion/structured_chunker.py | 新网页入口：300 BGE tokens、0 overlap，表格行保留候选表头与来源 | 超长行分片；候选表头需核验 |
+| ingestion/parser.py | 旧 PDF 实验入口，保留原文块、坐标、页码 | 保留原行为，未接新表格结构 |
 | ingestion/normalizer.py | 块内清洗、保留段落、保守移除重复页脚 | 不恢复复杂版式 |
-| ingestion/chunker.py | 段落分块、长段切分，500 词/80 词重叠 | 按词而非 token，不跨页 |
+| ingestion/chunker.py | 旧实验入口：段落分块、长段切分，500 词/80 词重叠 | 按词而非 token，不跨页 |
 | indexing/embeddings.py | BAAI/bge-small-en-v1.5，归一化向量 | 长输入截断尚待评估 |
 | indexing/vector_store.py | SQLite 保存/加载 chunks、float32 向量与模型配置 | 整批替换，无增量更新 |
 | retrieval/dense.py | NumPy 点积检索 | SQLite 仅存储，查询仍在内存完成 |
@@ -46,8 +48,8 @@ uv run app.py
 | generation/prompt.py、generator.py | 基于证据的提示词与 DeepSeek API | 支持 generate_turn 工具调用适配 |
 | pipeline.py | FinancialRAG.retrieve/ask，实时完整单轮问答 | 检索委托给独立 Retriever；另有 ask_agent() 多轮入口 |
 | retrieval/retriever.py | Dense/BM25 → RRF → 重排，支持 exclude_chunk_ids 和按次 top_k | 按 ID 去重，不做语义去重；不保存请求记忆 |
-| app.py | FastAPI 多 PDF 会话、统一入库和问答 API | 本地开发服务，无登录和公共部署 |
-| templates/index.html、static/ | 多 PDF、实时进度、流式回答、耗时与逐轮证据展示 | 近期历史传给查询规划器以补全追问 |
+| app.py | FastAPI 多格式会话、统一入库、原文/结构及问答 API | 本地开发服务，无登录和公共部署 |
+| templates/index.html、static/ | 多格式上传、表格预览、实时进度、回答与逐轮证据展示 | 近期历史传给查询规划器以补全追问 |
 | schemas.py | 当前检索、问答与会话上下文数据契约 | TypedDict 不做运行时校验 |
 
 当前网页与 pipeline 使用 BGE reranker v2-m3、2048 tokens；生成默认 deepseek-flash。
@@ -58,7 +60,7 @@ Reranker 类及批量对比入口仍默认 MiniLM、512 tokens，不要混淆入
 
 ```text
 入库（仅新增/替换文档时）：
-PDF → 解析 → 清洗 → 分块 → 文档向量 → SQLite
+PDF / DOCX / XLSX → 统一 Document（完整结构 JSON）→ 带来源的检索视图 → 文档向量 → SQLite
 
 问答（每个问题）：
 加载/复用索引 → 问题向量 → Dense 20 + BM25 20
@@ -371,3 +373,291 @@ missing_information 与 query；理由保存在检索历史中并展示在网页
 - 切分变化后按必要信息点和原文位置比较，不以旧 chunk_id 作为唯一标准。
 
 本节仅记录修改路线；当前仍是原有按段落/词数分块和无内容类型降权的检索流程。
+
+
+## FinanceBench 10 题试跑
+
+已接入 FinanceBench 官方公开数据的固定版本（`cc39aeb4afdf33909ee1412188bf89035950c2eb`）。
+无需先自行标注；默认按三种题型轮流抽取 10 家不同公司的 10 道题，固定种子 20261013。
+
+```bash
+# 下载标注与样本 PDF，并构建独立的持久化索引
+python -m financial_rag.evaluation.financebench --phase prepare
+python -m financial_rag.evaluation.financebench --phase index
+# 实际调用配置的 DeepSeek API，逐题比较单轮与多轮
+python -m financial_rag.evaluation.financebench --phase run --output outputs/financebench/my_run
+```
+
+需已安装项目依赖、准备现有本地 BGE 模型，并配置 `.env` 中的 API 密钥。
+下载文件在 `data/raw/financebench/`；索引在 `storage/financebench/<fingerprint>/`；
+结果包含配置/源码哈希、标准答案、实际回答、检索各阶段轨迹、页级覆盖、耗时与 API token 用量。
+同一输出目录会跳过已保存的案例；错误案例也保留，重试前需先检查并移除对应错误 JSON。
+配置变化时使用新的输出目录。`--count` 受三类题型与公司去重约束，当前采样器不支持直接用 150 跑满全部题目。
+
+2026-10-13 首跑报告：`outputs/financebench/pilot_20261013/report.html`，10 PDF / 1866 页 / 2891 chunks。
+单轮至少命中一页为 5/10，覆盖全部标注页为 3/10；多轮两项均为 10/10，调用数为 10 vs 29。
+这不是答案准确率。多轮累计证据预算更大，且命中表格页后仍可能读错年份（Verizon 案例）。
+输入为原始问题加公开目标文件名，共享语料检索，不按文档过滤；答案与标注页不进入模型输入。
+标注页并未穷尽所有有效证据，因此页级匹配仅用于诊断，不能等同于严格召回率。
+本次试跑报告中的逐题文字为初步对照复核，未使用额外 LLM 裁判，也未全面核验扩展结论。
+
+## 后续路线：金融文档理解、检索与可信回答（计划）
+
+项目以金融文档阅读、检索证据和回答问题为核心，首阶段文档范围确定为 PDF、Word、Excel 三类，
+优先沿用单 Agent / RAG 流程，逐步形成可管理、可追溯、可评测的文档问答系统。
+以下是后续研究与实现清单，不代表功能已经完成；已有基础能力也需要按这些标准继续验证。
+`src/financial_rag/schemas.py` 描述当前数据契约，待具体方案确定后再同步扩展字段与存储格式。
+
+- [ ] **PDF 中的表格、跨页内容、扫描文字怎么解析？**
+  区分带文字层的 PDF 与扫描页，评估按需 OCR；保留表格行列、表头、单位、脚注及原页位置，
+  设计跨页表格续接与来源追溯。用原始页面核对解析结果，重点检查数字、负号、小数点和年份是否错位。
+  首个回归案例采用 FinanceBench 中 Verizon 的流动负债年份错配问题。
+
+- [ ] **用户问某个指标，怎样找到正确的年份、单位和原文？**
+  将公司、指标、报告年份、指标所属期间、币种和数量级共同用于检索与核验；区分财年、自然年、
+  季度和期末时点。计算题保留各输入值的来源、单位换算和公式，检查取数是否来自正确行列。
+  验收包含同一指标多年度并列、千/百万/十亿单位差异及需要多页证据的题目。
+
+- [ ] **多份报告里的口径不同，怎么避免混用？**
+  区分合并与分部、GAAP 与调整后指标、原始与重述数据，以及公司披露公式与用户指定公式。
+  记录每个数值所属报告、期间和定义；发现冲突时展示差异并解释，无法统一时要求澄清或分别回答。
+  验收时专门加入同名指标不同定义、不同报告版本与跨公司比较的案例。
+
+- [ ] **回答怎样附上证据？找不到信息时怎么处理？**
+  在现有引用机制上核验关键结论是否被原文支持，能否定位到报告、物理页码和具体原文或表格区域。
+  区分原文披露值、计算结果和分析判断；缺少证据时明确缺失项，按预算补查，仍不足则说明无法确定。
+  验证证据不足、证据冲突、只找到部分计算输入时的行为，避免用无关引用支撑结论或凭空补数。
+
+- [ ] **怎样验证检索和答案的质量？**
+  以 FinanceBench 现成文档与标注为起点，固定语料、问题、配置和基线，再逐步扩大样本；
+  对有歧义或失败的案例做少量原页核验，降低从零人工标注的成本。
+  分开评估解析/取数、检索证据覆盖、答案数值与口径、引用支持性及证据不足时的处理，
+  同时记录耗时、token 用量与模型调用数。单轮和多轮除默认配置对比外，再设计同等预算对比。
+  标注页命中不等于答案正确，标注也可能未穷尽有效证据；自动裁判只能辅助，关键错误需原文复核。
+
+建议推进顺序：保存现有 FinanceBench 基线 → 修复表格年份与数值对应 → 完善期间/单位/口径元数据
+→ 加强引用与缺证据处理 → 扩大评测。扫描页 OCR、跨页表格各自建立小型专项用例，按需求分步接入。
+每次尽量只改变一个因素，并复用同一批问题确认改进效果；结构分块的具体模块路线见上文“Chunk 策略修改路径”。
+
+
+### Embedding 模型对比实验（计划）
+
+- [ ] **建立可切换的 embedding 模型配置。**
+  以当前 `BAAI/bge-small-en-v1.5` 为基线，后续选择不同规模、中文/英文/多语言能力的模型进行比较；
+  本地模型与 API embedding 可分别作为候选，具体型号和版本在实验前确定。
+  记录模型版本、向量维度、输入长度、截断、归一化、相似度计算和 query/document 提示格式，遵循各模型的使用要求。
+  每个模型独立生成文档向量与索引，查询使用匹配模型；缓存键包含模型及编码配置，避免复用不兼容的向量。
+
+- [ ] **固定条件，分阶段比较检索效果。**
+  先复用 FinanceBench 的同一批文档、解析结果、分块、问题和 Top-K，仅替换 embedding 模型；
+  先比较纯向量召回，再固定 BM25、RRF 和 reranker 配置，观察模型差异在完整检索流程中是否仍有收益。
+  按各阶段记录标注证据覆盖、Hit@K、首个相关结果的排名及失败案例；页级标注不等于片段级相关性，
+  未穷尽证据时不把标注页覆盖称为严格召回率。中文提问、英文财报和跨语言检索另建分组用例，避免混在总分中。
+
+- [ ] **同时评估效率与资源成本。**
+  在相同硬件和明确的批大小条件下记录文档编码速度、索引构建时间、查询延迟、内存/显存及索引大小；
+  API 模型另记录请求量和费用。区分冷启动、热运行与缓存命中，并重复测量延迟，避免只凭单次耗时下结论。
+
+- [ ] **验证最终回答收益并保存实验记录。**
+  对候选模型固定生成模型、提示词和 Agent 搜索预算，复核取数、年份/单位、答案及引用质量，
+  区分 embedding 改善与后续重排、补查的贡献。保存配置、数据版本、逐题结果和对比表，
+  用效果、速度与成本共同决定取舍。当前 10 题用于试跑与诊断，扩大样本并保留未参与调参的测试题后再确定默认模型。
+
+### 多格式文档与记忆（计划）
+
+- [x] **PDF、Word、Excel 统一输入与检索（首版；复杂结构及冲突评测继续推进）。**
+  提供统一上传入口，按格式选择解析器，再接入共同的索引、检索和回答流程。
+  首版已支持 `.pdf`、`.docx`、`.xlsx`；旧版 `.doc`、`.xls` 的转换支持后续单独评估。
+  PDF 保留页码与区域；Word 保留标题层级、段落及表格位置；Excel 保留工作表名、单元格范围、
+  表头、数值格式、公式与可用的计算结果，遇到结果缺失或可能过期时明确提示。
+  不把所有格式强行压成无结构纯文本，也不为 Word、Excel 编造 PDF 页码。
+  验收包含混合上传、跨格式取证、来源定位，以及同一指标在不同格式中数值或口径冲突的场景。
+
+- [ ] **完善短期记忆。**
+  当前已有会话内有界临时记忆，可辅助追问补全；后续继续完善实体、期间、单位、用户约束和未解决问题的跟踪。
+  研究按需摘要与上下文预算，保留摘要到原对话的关联；切换公司、期间或资料库时检查旧上下文是否仍适用。
+  历史回答帮助理解问题，财务结论仍需本轮证据支持。验收包含连续追问、话题切换和上下文超限。
+
+- [ ] **加入长期记忆。**
+  规划跨会话持久保存用户明确表达的偏好、项目术语、分析口径及经确认的结论，并按当前任务检索相关记忆。
+  区分文档知识库、会话历史和长期记忆：上传文档进入知识库，不自动把模型回答当作可靠事实写入长期记忆。
+  每条记忆记录来源、适用范围、时间与有效状态；提供查看、修正、删除与关闭入口，处理冲突和失效信息。
+  文档更新或删除后，对依赖该文档的记忆重新核验或标记失效；按用户和项目隔离。
+  验收包含重启后恢复、跨会话使用、错误记忆纠正、遗忘及项目间不串用。
+
+### 系统工程配套（计划）
+
+围绕上述能力补齐以下最小闭环，按实际需求推进：
+
+- [ ] **文档与索引管理：** 文档列表、去重、版本、删除、增量入库与重建；更新文档后同步处理索引、缓存和相关记忆。
+- [ ] **任务与错误恢复：** 展示上传、解析、索引的进度与失败原因；支持重试，避免重复任务造成重复入库。
+- [ ] **缓存与可观测性：** 按文档内容、解析/模型版本和检索配置管理解析及向量缓存；记录检索轨迹、耗时、调用量与错误，便于定位瓶颈。
+- [ ] **会话与资料隔离：** 明确用户、项目、会话和文档的归属，保证检索、记忆及缓存遵循同一访问范围。
+- [ ] **运行与回归：** 整理配置、启动与部署说明，建立小型端到端回归集；覆盖三类文档、追问、证据不足、更新删除和失败恢复。
+
+实施上先稳住 PDF 与现有评测，再接入 Word/Excel 并统一来源结构，随后完善短期记忆、引入长期记忆。
+文档管理、任务状态和观测随各阶段补齐；每阶段形成能演示、能复测的小闭环。以上为路线记录，本次不新增运行时功能。
+
+### 分块与截断实测（2026-10-13）
+
+已按上述顺序完成首轮离线实验：固定 `bge-small-en-v1.5`，使用已有 10 份 FinanceBench PDF 和 10 道题，
+比较原配置 500 词 / 80 词，以及 200/300/400 tokens × 0%/15% overlap 共 7 组。
+只做归一化向量检索，无 BM25、reranker、查询改写、Agent 或生成模型调用。
+
+报告：`outputs/chunk_ablation/financebench_20261013/report.html`；同目录保留 CSV、逐题排名、
+完整 chunk、向量、固定解析页面、配置与源码/模型文件哈希。运行入口：
+
+```bash
+python -m financial_rag.evaluation.chunk_ablation --output outputs/chunk_ablation/another_run
+```
+
+- 原配置 2,891 个 chunk 中 1,214 个（42.0%）超过 510 个正文 tokens；模型总上限 512，另含 2 个特殊 tokens。
+  中位长度 464、P95 为 698、最长 1,250 tokens；10 个查询均未截断。
+- 六组 token 分块均无输入截断，并校验逐页非空白原文完整覆盖。边界优先保留段落，overlap 是可能因词边界缩小的目标值，不跨页。
+- 原配置的 Top5 标注页覆盖为 35%，固定 2,000 tokens 返回文本预算下为 30%；300/0 对应 40% / 40%。
+- 两组 200-token 配置的预算页覆盖均为 50%，但抽查发现：200/0 在 Pfizer 题只命中页脚，200/30 在 PepsiCo 题命中不含资本开支的同页文字。
+  保留原始指标，不把这些页级命中解释成有效证据；报告列出原文供核对。
+- 每个 size 下加入 15% overlap 均未提高本轮汇总页覆盖，且增加 chunk 数量；这不证明 overlap 对其他语料无效。
+
+暂留 300 tokens / 0 overlap 为下一轮 embedding 对比候选，200 / 30 为补充对照；此建议结合原文抽查，
+不是仅按最高页级分数选型，也未修改应用的默认分块。当前 10 题属于开发集，扩大样本并增加指标行/数值级证据核验后再定默认参数。
+原配置与新配置还存在按词/按 token 计数和边界算法差异；六组新配置之间使用同一算法。
+
+
+### 固定分块的 Embedding 实测（2026-10-13）
+
+复用上轮 300 tokens / overlap 0 的 5,586 个完全相同片段，比较四个 embedding 模型；
+仍使用 10 份报告、10 道开发题，仅做归一化 dense 检索，不调用生成模型、Agent、BM25 或 reranker。
+报告：`outputs/embedding_ablation/financebench_300_0_20261013/report.html`。
+
+| 模型 | Top5 标注页覆盖 | Top20 标注页覆盖 | 固定 2,000 tokens 预算覆盖 |
+|---|---:|---:|---:|
+| bge-small | 50% | 50% | 50% |
+| bge-base | 45% | 70% | 55% |
+| bge-m3 | 20% | 55% | 30% |
+| qwen3-0.6b | 63% | 80% | 72% |
+
+BGE-small/base 使用官方推荐查询前缀，BGE-M3 使用无指令 dense 编码，Qwen 使用官方内置 query 指令与 last-token pooling。
+另保存 small 无指令旧查询对照。该实验比较模型及其接入方式，不能把收益全归因于模型参数。
+统一文本预算按原 BGE-small tokenizer 计数，不随模型改变；所有模型的文档和查询均无截断。
+
+报告包含逐题检索原文、三道题的关键字符串辅助诊断、模型权重/源码哈希、固定版本、索引大小和耗时。
+页级覆盖不代表所需指标已找到；small 的 PepsiCo 新增命中不含资本开支行，Qwen 的 Verizon 首位命中仅为页脚。
+Qwen 在 Corning 题的前两位则包含成本、库存和应付账款，属于可核对的改善。关键词核对也不等于完整正确性评分。
+本机 Qwen 编码期间观察到系统较高 swap 使用，性能数字仅作为当次本机实测参考。
+样本为已查看过的开发集，不代表中文检索或全量 FinanceBench 结果；应用默认模型与分块尚未更改。
+
+```bash
+python -m financial_rag.evaluation.embedding_ablation --model bge-small --output outputs/embedding_ablation/new_run
+# 对同一输出目录依次运行 bge-base、bge-m3、qwen3-0.6b
+```
+
+运行依赖已有冻结分块和本地模型。新增模型固定版本见 `models/embedding_comparison_manifest.json`；
+结果目录保存模型配置、token 审计、向量、查询向量、排名及源码快照。使用新模型前需独立建立匹配的向量索引。
+
+
+### 50 题证据内容复测（2026-10-13）
+
+保留 BGE-small 和 Qwen3-Embedding-0.6B，固定 300 tokens / overlap 0，扩展为 50 题、41 份完整报告、18,806 个分块。
+原 10 题保留，按固定种子新增 40 题；旧文档的 5,586 个片段逐字段保持一致。
+报告：`outputs/embedding_ablation/financebench50_300_0_20261013/report.html`。
+
+| 模型 | Top5 页码命中 / 50 题 | 有效证据命中 / 49 题 | 平均证据单元覆盖 | 全部单元找全 / 49 题 |
+|---|---:|---:|---:|---:|
+| BGE-small | 36.0% | 28.6% | 24.1% | 18.4% |
+| Qwen3-Embedding-0.6B | 52.0% | 38.8% | 29.9% | 22.4% |
+
+逐题建立 116 个证据单元，数值题绑定行名与精确金额，文字题核对关键事实/否定词。
+页脚和仅表头无内容的命中不给内容分；允许拼接真实返回且原文相邻的分块，不补入缺失文本。
+116 个单元均可在原页解析文本中找到，111 个能在单块中找到，5 个需要相邻块。
+Ulta 收购题涉及破折号、年度列和“没有收购”的语义，保留独立版面复核，不进入自动内容指标分母。
+报告保留原 10 / 新增 40 分组、Top5/10/20、统一 2,000-token 预算、逐题返回原文与命中依据。
+
+本轮两模型统一 FP16/MPS、batch 8；向量转 FP32 后归一化。文档/查询均无截断，保存实际源码与模型哈希、分块缓存、查询向量及精度抽查。
+这些是参考证据对齐的内容规则指标，不是专家语义判断或回答准确率；年份列/单位尚未全面结构化，标注页外等价证据可能漏计。
+50 题用于开发，不是未见测试集；新增文档带来额外干扰，因此旧题成绩不能直接与上一轮作因果比较。
+
+```bash
+# 使用现有原 10 题数据和本地模型；download 扩充至固定的 50 题 PDF
+python -m financial_rag.evaluation.embedding_evidence_ablation download
+python -m financial_rag.evaluation.embedding_evidence_ablation prepare --output outputs/embedding_ablation/new_50_run
+python -m financial_rag.evaluation.embedding_evidence_ablation bge-small --output outputs/embedding_ablation/new_50_run
+python -m financial_rag.evaluation.embedding_evidence_ablation qwen3-0.6b --output outputs/embedding_ablation/new_50_run
+python -m financial_rag.evaluation.embedding_evidence_ablation score --output outputs/embedding_ablation/new_50_run
+python -m financial_rag.evaluation.embedding_evidence_ablation report --output outputs/embedding_ablation/new_50_run
+```
+
+精度核验依赖上一轮 10 题 FP32 向量；已完成本次目录的实际运行脚本另存于其 `scripts/` 下。
+证据规则纳入 `src/financial_rag/evaluation/data/financebench50_evidence.json`；结果 CSV、可达性和人工复核记录随报告保存。
+应用默认检索与分块配置未改动。
+
+
+## 统一文档输入首版（2026-10-13）
+
+本轮将新 FastAPI 网页入口接到统一解析管线。旧 `parse_pdf`、`chunk_pages`、FinanceBench 及 embedding
+实验入口保持原行为，历史报告不代表新结构化解析的召回效果；后续应单独进行解析/分块回归实验。
+
+### 数据契约与来源
+
+运行时契约在 `src/financial_rag/ingestion/document.py`，由 Pydantic 校验；可用
+`Document.model_json_schema()` 取得 JSON Schema，仓库同时提供 `docs/document.schema.json`。层级为 `Document → Element / Table → Cell`：
+
+- `document_id` 是原文件字节 SHA-256，绑定文件版本；`schema_version=1.0`，`parser_version=native-v1`。
+- `elements` 保留正文顺序、段落/标题/表格类型及来源；`tables` 单独保存完整网格和合并单元格的锚点、跨度。
+- PDF：1-based 物理页码，`bbox=[x0,y0,x1,y1]`，单位为 PDF point、未旋转页面左上角坐标系。表格行片段还附单元格 bbox 和表头 bbox。
+- Word：正文段落序号、标题路径、表格序号和行列；序号从 1 开始。没有稳定页码，`page=null`。
+- Excel：工作表名与 A1 范围，例如 `'Income statement'!B4:D4`；保留合并范围、原值类型、数值格式、公式及缓存结果。表内行列从有效区域左上角的 1 开始，真正来源以 A1 坐标为准。
+- 空单元格 `value=null`、数字零和字符串横线分别保留。公式不执行；`cache_status=missing/unverified` 区分缺失与新鲜度未知，避免把缓存当成新计算结果。日期时间保存 ISO 字符串。
+- Chunk 保留 `source/source_label`、`element_id/context_refs`、`table_id/cell_refs/header_cell_refs`。
+  正文 `text_spans` 是原 element 内字符区间；表格 `text_span` 是该行检索文本（不含重复前缀）的字符区间。
+  chunk ID 包含文档哈希、解析版本、预算、序号及文本/来源摘要，防止改文后沿用旧证据。
+
+### 检索视图与保存
+
+网页使用本地 BGE-small tokenizer，单片最多 **300 tokens（含特殊 token）、overlap 0**。
+正文按来源分组；表格按行生成视图，重复候选表头，并在预算允许时附邻近标题/单位文字。
+超长行继续分片、保留原单元格指针；过长表头不静默截掉，而是保留独立索引行和完整表格结构。
+候选表头为启发式识别，明确标记 `header_origin=heuristic`；Word 显式重复表头可标 `explicit`。
+完整表格不受 embedding 长度限制。原生 PDF 中已有的保守重复页脚过滤只影响检索视图，不删除结构化原文。
+
+每个临时工作区保存原始文件、`<document_id>.json` 完整结构和 `vectors.sqlite3`。
+同内容重复上传复用已有解析及向量；当前没有跨服务重启的持久解析缓存。
+新格式的来源字段贯穿 Dense、BM25、RRF、证据注册、最终引用及每轮检索记录。
+评测导出包含原始三类文件及**入库当时**的 `structured/` 快照，保存时不再重新解析新格式。
+
+网页文档列表支持下载原文、查看结构；表格引用可打开完整表格预览。
+预览最多显示前 100 行、50 列，完整内容在 JSON 中。接口均绑定当前浏览器会话：
+
+- `GET /api/documents/{document_id}/original`：下载原始文件。
+- `GET /api/documents/{document_id}/structure`：返回统一结构、单元格来源、解析警告及 OCR 待办。
+
+独立解析，不调用模型或 API：
+
+```bash
+uv run python -m financial_rag.ingestion report.pdf report.docx report.xlsx --output outputs/parsed_documents
+# 可选：同时输出 300-token 检索视图；只加载本地 tokenizer，不加载 embedding 权重。
+uv run python -m financial_rag.ingestion report.xlsx --output outputs/parsed_documents --tokenizer models/bge-small-en-v1.5
+```
+
+### OCR 接口与已知边界
+
+`OCRBackend.recognize(image_bytes, OCRRequest) -> OCRResult` 定义后续模型适配入口；结果要求包含
+元素/表格、引擎和版本。当前**未接入或下载任何 OCR 模型，也不自动执行该接口**。
+无文字页以及含大幅图像的混合页生成页码/区域级 `needs_ocr` 请求；检测是启发式，空白页也可能进入待核验列表。
+混合 PDF 的可读内容可以入库，界面及检索上下文会提示未识别页；纯扫描 PDF 因无可索引内容会拒绝入库并明确提示 OCR 未接入。
+
+原生解析首版限制：
+
+- PDF 用现有 PyMuPDF 线框表检测，不声称恢复全部无框表、复杂多栏或跨页续表；跨页片段保留各页来源，暂不自动拼表。
+- Word 解析正文段落和顶层表格，保留横纵合并。嵌套表、页眉页脚、文本框、批注、修订和图片内容尚未全面解析，记录相关警告；不虚构 Word 页码。
+- Excel 每工作表保存一个有效区域，前置合并标题及下一行为候选表头。复杂多表布局、图表、外链数据刷新和公式重算未实现；隐藏工作表也会解析并提示。有效区域上限 200000 个单元格。
+- `.doc/.xls/.xlsm` 暂不支持。Office 解压总量限 256 MiB；沿用上传每份 20 MiB、资料库 100 MiB/10 份限制。
+- 本轮验证结构与来源贯通，不宣称提升金融问答或检索准确率；不同格式数值冲突的回答质量需要单独评测。
+
+自动测试覆盖真实生成的 PDF 线框表、扫描待办、Word 横纵合并、Excel 多工作表/合并区域/空值/零/横线/
+格式/公式缓存、token 上限、SQLite 往返、检索融合到引用、混合上传追加、会话隔离和清空后的评测导出。
+
+
+真实文档冒烟检查：现有 `BESTBUY_2024Q2_10Q.pdf` 全部 30 页完成解析，原生检测返回 56 个候选表、
+6763 个单元格和 543 个检索片段；实际 BGE tokenizer 的片段上限为 300 tokens。
+这项检查验证管线与来源有效性，候选表数量不代表人工确认的表格识别准确率。未调用生成 API，也未重跑 embedding 对比。
