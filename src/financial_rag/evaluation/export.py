@@ -54,7 +54,7 @@ def snapshot_run(state, result, root):
                   'use_query_planning':True, 'model_revisions':revisions}
         write_json(target / 'config.json', config)
         versions = {}
-        for name in ('numpy','sentence-transformers','transformers','pymupdf','openai','flask'):
+        for name in ('numpy','sentence-transformers','transformers','pymupdf','openai','fastapi','starlette','uvicorn'):
             try: versions[name] = importlib.metadata.version(name)
             except importlib.metadata.PackageNotFoundError: pass
         write_json(target / 'versions.json', versions)

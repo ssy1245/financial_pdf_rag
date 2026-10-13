@@ -14,7 +14,9 @@ uv run app.py
 ```
 
 浏览器打开 http://127.0.0.1:8000，也可在 macOS 双击 `start.command`。
-在项目 `.env` 设置 `DEEPSEEK_API_KEY`；Flask 入口自动加载，密钥只在后端使用。
+后端为 FastAPI + Uvicorn，接口文档位于 http://127.0.0.1:8000/docs；也可运行 `uv run uvicorn app:app --host 127.0.0.1 --port 8000`。
+当前资料库和会话在进程内，请使用单 worker；共享模型仍通过锁串行执行。
+在项目 `.env` 设置 `DEEPSEEK_API_KEY`；FastAPI 入口自动加载，密钥只在后端使用。
 拖入/多选 PDF（可分次添加，待上传列表支持移除）→ 开始阅读 → 输入问题 → 展开文件名、PDF 页码和引用原文。
 前端是 HTML/CSS/JavaScript，不需要 Node 构建，但必须启动 Python 后端，不能仅双击 HTML。
 
@@ -44,7 +46,7 @@ uv run app.py
 | generation/prompt.py、generator.py | 基于证据的提示词与 DeepSeek API | 支持 generate_turn 工具调用适配 |
 | pipeline.py | FinancialRAG.retrieve/ask，实时完整单轮问答 | 检索委托给独立 Retriever；另有 ask_agent() 多轮入口 |
 | retrieval/retriever.py | Dense/BM25 → RRF → 重排，支持 exclude_chunk_ids 和按次 top_k | 按 ID 去重，不做语义去重；不保存请求记忆 |
-| app.py | Flask 多 PDF 会话、统一入库和问答 API | 本地开发服务，无登录和公共部署 |
+| app.py | FastAPI 多 PDF 会话、统一入库和问答 API | 本地开发服务，无登录和公共部署 |
 | templates/index.html、static/ | 多 PDF、实时进度、流式回答、耗时与逐轮证据展示 | 近期历史传给查询规划器以补全追问 |
 | schemas.py | 当前检索、问答与会话上下文数据契约 | TypedDict 不做运行时校验 |
 

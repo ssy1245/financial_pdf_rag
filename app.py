@@ -8,6 +8,7 @@ import tempfile
 import threading
 import json
 import queue
+import asyncio
 from time import perf_counter
 from pathlib import Path
 from functools import lru_cache
@@ -16,7 +17,14 @@ from datetime import datetime, timezone
 from financial_rag.evaluation.export import snapshot_run, save_bundle
 
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, render_template, request, session
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from financial_rag.ingestion.parser import parse_pdf
 from financial_rag.ingestion.normalizer import normalize_pages
 from financial_rag.ingestion.chunker import chunk_pages
@@ -26,8 +34,73 @@ from financial_rag.memory import ConversationMemory
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
-app = Flask(__name__)
-app.config.update(SECRET_KEY=secrets.token_hex(32), MAX_CONTENT_LENGTH=101*1024*1024, SESSION_COOKIE_SAMESITE="Strict")
+app = FastAPI(title="Financial PDF RAG", version="0.1.0")
+app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32), same_site="strict")
+app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+
+
+MAX_UPLOAD_REQUEST_BYTES = 101 * 1024 * 1024  # 含 multipart 封装
+
+
+class UploadSizeLimitMiddleware:
+    """同时限制声明长度和实际接收长度，包括没有 Content-Length 的上传。"""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["path"] != "/api/upload":
+            return await self.app(scope, receive, send)
+        limit = MAX_UPLOAD_REQUEST_BYTES
+        headers = dict(scope.get("headers", []))
+        try:
+            declared = int(headers.get(b"content-length", b"0"))
+        except ValueError:
+            return await JSONResponse({"error": "上传长度无效"}, status_code=400)(scope, receive, send)
+        if declared > limit:
+            return await JSONResponse({"error": "上传总大小不能超过 100 MB"}, status_code=413)(scope, receive, send)
+        received = 0
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            received += len(message.get("body", b""))
+            if received > limit:
+                raise HTTPException(status_code=413, detail="上传总大小不能超过 100 MB")
+            return message
+        await self.app(scope, limited_receive, send)
+
+
+app.add_middleware(UploadSizeLimitMiddleware)
+
+
+class QuestionRequest(BaseModel):
+    question: str = Field(strict=True, min_length=1, max_length=4000)
+
+    @field_validator("question")
+    @classmethod
+    def nonempty(cls, value):
+        if not value.strip():
+            raise ValueError("问题不能为空")
+        return value
+
+
+class SaveRunRequest(BaseModel):
+    browser_elapsed_seconds: float | None = Field(default=None, strict=True, ge=0, allow_inf_nan=False)
+
+
+def error_response(message, status_code=400, **extra):
+    return JSONResponse({"error": message, **extra}, status_code=status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request, exc):
+    return error_response("请求参数无效；问题须为非空字符串且不超过 4000 字，耗时须为非负有限数值")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request, exc):
+    return error_response(str(exc.detail), exc.status_code)
+
+
 MODEL = "BAAI/bge-small-en-v1.5"
 lock = threading.RLock()
 workspaces = {}
@@ -69,7 +142,7 @@ def build_workspace(files, previous=None):
             name = Path(file.filename or "").name
             if not name.lower().endswith(".pdf"):
                 raise ValueError("只支持 PDF 文件")
-            data = file.read(20*1024*1024+1)
+            data = file.file.read(20*1024*1024+1)
             total += len(data)
             if not data or len(data)>20*1024*1024 or total>100*1024*1024:
                 raise ValueError("每份 PDF 须为 1 字节至 20 MB，合计不超过 100 MB")
@@ -113,38 +186,43 @@ def build_workspace(files, previous=None):
 
 
 @app.get("/")
-def index():
-    session.setdefault("id", secrets.token_urlsafe(24))
-    return render_template("index.html")
+def index(request: Request):
+    request.session.setdefault("id", secrets.token_urlsafe(24))
+    return FileResponse(ROOT / "templates/index.html")
 
 
 @app.get("/api/status")
-def status():
+def status(request: Request):
     with lock:
-        state = workspaces.get(session.get("id"))
-        return jsonify(documents=state['documents'] if state else [], key_ready=bool(os.getenv('DEEPSEEK_API_KEY')))
+        state = workspaces.get(request.session.get("id"))
+        return dict(documents=state['documents'] if state else [], key_ready=bool(os.getenv('DEEPSEEK_API_KEY')))
 
 
 @app.post("/api/upload")
-def upload():
+async def upload(request: Request):
     if not os.getenv("DEEPSEEK_API_KEY"):
-        return jsonify(error="请先在 .env 配置 DEEPSEEK_API_KEY"), 400
-    files = request.files.getlist("files")
-    if not 1 <= len(files) <= 10:
-        return jsonify(error="请选择 1–10 份 PDF"), 400
-    session.setdefault("id", secrets.token_urlsafe(24))
+        return error_response("请先在 .env 配置 DEEPSEEK_API_KEY")
+    request.session.setdefault("id", secrets.token_urlsafe(24))
+    async with request.form(max_files=10, max_fields=0) as form:
+        files = form.getlist("files")
+        if not 1 <= len(files) <= 10 or any(not hasattr(file, "file") for file in files):
+            return error_response("请选择 1–10 份 PDF")
+        return await run_in_threadpool(process_upload, files, request.session['id'])
+
+
+def process_upload(files, session_id):
     try:
         with lock:
-            old = workspaces.get(session['id'])
+            old = workspaces.get(session_id)
             new = build_workspace(files, old)
-            workspaces[session['id']] = new
+            workspaces[session_id] = new
             if old and old is not new:
                 old['folder'].cleanup()
-        return jsonify(documents=new['documents'])
+        return dict(documents=new['documents'])
     except ValueError as error:
-        return jsonify(error=str(error)), 400
+        return error_response(str(error))
     except Exception:
-        return jsonify(error="处理失败，请检查模型是否可用后重试；原文档仍保留"), 500
+        return error_response("处理失败，请检查模型是否可用后重试；原文档仍保留", 500)
 
 
 def conversation_options(state):
@@ -164,21 +242,18 @@ def remember_run(session_id, state, result):
     return run_id
 
 
-@app.post('/api/runs/<run_id>/save')
-def save_run(run_id):
-    body = request.get_json(silent=True) or {}
-    elapsed = body.get('browser_elapsed_seconds') if isinstance(body, dict) else None
-    if elapsed is not None and (type(elapsed) not in (int, float) or not np.isfinite(elapsed) or elapsed < 0):
-        return jsonify(error='耗时参数无效'), 400
+@app.post('/api/runs/{run_id}/save')
+def save_run(run_id: str, request: Request, body: SaveRunRequest):
+    elapsed = body.browser_elapsed_seconds
     with lock:
-        snapshot = run_snapshots.get(session.get('id'), {}).get(run_id)
+        snapshot = run_snapshots.get(request.session.get('id'), {}).get(run_id)
         if snapshot is None:
-            return jsonify(error='该次记录已过期或服务已重启，请重新提问后保存'), 404
+            return error_response('该次记录已过期或服务已重启，请重新提问后保存', 404)
         try:
             path = save_bundle(Path(snapshot.name), EXPORT_ROOT, run_id, elapsed)
-            return jsonify(path=str(path), run_id=run_id)
+            return dict(path=str(path), run_id=run_id)
         except Exception:
-            return jsonify(error='保存失败，请检查磁盘空间和目录权限后重试'), 500
+            return error_response('保存失败，请检查磁盘空间和目录权限后重试', 500)
 
 
 def evidence_history(result, names):
@@ -200,22 +275,19 @@ def evidence_history(result, names):
 
 
 @app.post("/api/ask")
-def ask():
+def ask(body: QuestionRequest, request: Request):
     started = perf_counter()
-    body = request.get_json(silent=True) or {}
-    question = body.get('question') if isinstance(body, dict) else None
-    if not isinstance(question, str) or not question.strip() or len(question)>4000:
-        return jsonify(error="请输入不超过 4000 字的问题"), 400
+    question = body.question
     with lock:
-        state = workspaces.get(session.get('id'))
+        state = workspaces.get(request.session.get('id'))
         if not state:
-            return jsonify(error="请先上传并阅读 PDF"), 400
+            return error_response("请先上传并阅读 PDF")
         try:
             result = state['rag'].ask_agent(question, **conversation_options(state))
             if result['status'] == 'error':
-                return jsonify(error='模型调用失败，请检查网络或配置后重试', elapsed_seconds=round(perf_counter()-started, 3)), 502
+                return error_response('模型调用失败，请检查网络或配置后重试', 502, elapsed_seconds=round(perf_counter()-started, 3))
             try:
-                run_id = remember_run(session.get('id'), state, result)
+                run_id = remember_run(request.session.get('id'), state, result)
                 export_warning = None
             except Exception:
                 run_id, export_warning = None, '评测快照准备失败，本次无法保存；回答仍可查看'
@@ -224,24 +296,21 @@ def ask():
                 source['filename'] = state['names'][source['document_id']]
                 source['text'] = evidence[source['chunk_id']]['text']
             state['conversation'].record(question, result)
-            return jsonify(resolved_question=result.get('resolved_question', question), run_id=run_id, export_warning=export_warning, answer=result['answer'], sources=result['sources'], citation_status=result['citation_status'],
+            return dict(resolved_question=result.get('resolved_question', question), run_id=run_id, export_warning=export_warning, answer=result['answer'], sources=result['sources'], citation_status=result['citation_status'],
                            status=result['status'], stop_reason=result['stop_reason'],
                            query_plan=result['query_plan'], search_history=evidence_history(result, state['names']),
                            planning_calls=result.get('planning_calls'), model_steps=result.get('model_steps'),
                            model_calls=result['model_calls'], elapsed_seconds=round(perf_counter()-started, 3))
         except Exception:
-            return jsonify(error="回答失败，请检查网络、DeepSeek 配置或账户额度后重试"), 502
+            return error_response("回答失败，请检查网络、DeepSeek 配置或账户额度后重试", 502)
 
 
 @app.post("/api/ask/stream")
-def ask_stream():
-    body = request.get_json(silent=True) or {}
-    question = body.get('question') if isinstance(body, dict) else None
-    if not isinstance(question, str) or not question.strip() or len(question) > 4000:
-        return jsonify(error="请输入不超过 4000 字的问题"), 400
-    session_id = session.get('id')
+def ask_stream(body: QuestionRequest, request: Request):
+    question = body.question
+    session_id = request.session.get('id')
     if session_id not in workspaces:
-        return jsonify(error="请先上传并阅读 PDF"), 400
+        return error_response("请先上传并阅读 PDF")
     events = queue.Queue(maxsize=128)
     cancelled = threading.Event()
     delivered = threading.Event()
@@ -302,13 +371,13 @@ def ask_stream():
             if acquired:
                 lock.release()
 
-    def stream():
+    async def stream():
         try:
             yield json.dumps({"type": "progress", "message": "请求已收到，正在等待处理"}, ensure_ascii=False) + "\n"
             threading.Thread(target=worker, daemon=True).start()
             while not cancelled.is_set():
                 try:
-                    event = events.get(timeout=10)
+                    event = await asyncio.to_thread(events.get, timeout=1)
                 except queue.Empty:
                     yield '{"type":"heartbeat"}\n'
                     continue
@@ -319,23 +388,19 @@ def ask_stream():
                     break
         finally:
             cancelled.set()
-    return Response(stream(), mimetype='application/x-ndjson',
+    return StreamingResponse(stream(), media_type='application/x-ndjson',
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
 @app.delete("/api/documents")
-def clear():
+def clear(request: Request):
     with lock:
-        old = workspaces.pop(session.get('id'), None)
+        old = workspaces.pop(request.session.get('id'), None)
         if old:
             old['folder'].cleanup()
-    return jsonify(ok=True)
-
-
-@app.errorhandler(413)
-def too_large(error):
-    return jsonify(error="上传总大小不能超过 100 MB"), 413
+    return dict(ok=True)
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8000, debug=False)
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)

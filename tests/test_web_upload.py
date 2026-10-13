@@ -1,11 +1,13 @@
 """追加上传的离线集成测试：真实 PDF 解析和 SQLite，模型用替身。"""
 import importlib.util
-from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import pymupdf
 import pytest
+from fastapi.testclient import TestClient
+import base64
+import json
 
 spec = importlib.util.spec_from_file_location('web_app_tests', Path(__file__).resolve().parents[1] / 'app.py')
 web = importlib.util.module_from_spec(spec)
@@ -30,7 +32,7 @@ def client(monkeypatch):
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'offline-test')
     monkeypatch.setattr(web, 'models', lambda: (embedding, object()))
     monkeypatch.setattr('financial_rag.generation.generator.DeepSeekGenerator', lambda: object())
-    with web.app.test_client() as client:
+    with TestClient(web.app) as client:
         yield client, embedding
     for state in web.workspaces.values():
         state['folder'].cleanup()
@@ -42,7 +44,7 @@ def client(monkeypatch):
 
 
 def upload(client, data, name='report.pdf'):
-    return client.post('/api/upload', data={'files': (BytesIO(data), name)})
+    return client.post('/api/upload', files={'files': (name, data, 'application/pdf')})
 
 
 def test_append_deduplicates_and_encodes_only_new_chunks(client):
@@ -52,7 +54,7 @@ def test_append_deduplicates_and_encodes_only_new_chunks(client):
     old = next(iter(web.workspaces.values()))
     old_ids = set(old['rag'].chunks_by_id)
     response = upload(c, pdf('second revenue 200'), 'second.pdf')
-    assert [d['name'] for d in response.json['documents']] == ['first.pdf', 'second.pdf']
+    assert [d['name'] for d in response.json()['documents']] == ['first.pdf', 'second.pdf']
     current = next(iter(web.workspaces.values()))
     assert old_ids < set(current['rag'].chunks_by_id)
     assert len(embedding.batches) == 2
@@ -60,39 +62,38 @@ def test_append_deduplicates_and_encodes_only_new_chunks(client):
     assert not Path(old['folder'].name).exists()
     assert len(list(Path(current['folder'].name).glob('*.pdf'))) == 2
     response = upload(c, first, 'renamed.pdf')
-    assert len(response.json['documents']) == 2
+    assert len(response.json()['documents']) == 2
     assert next(iter(web.workspaces.values())) is current
     assert len(embedding.batches) == 2
     assert Path(current['folder'].name).exists()
     assert c.delete('/api/documents').status_code == 200
-    assert c.get('/api/status').json['documents'] == []
+    assert c.get('/api/status').json()['documents'] == []
 
 
 def test_bad_batch_leaves_original_workspace_intact(client):
     c, embedding = client
     upload(c, pdf('original'))
     old = next(iter(web.workspaces.values()))
-    response = c.post('/api/upload', data={'files': [
-        (BytesIO(pdf('valid addition')), 'valid.pdf'),
-        (BytesIO(b'broken'), 'broken.pdf')]})
+    response = c.post('/api/upload', files=[('files', ('valid.pdf', pdf('valid addition'), 'application/pdf')),
+               ('files', ('broken.pdf', b'broken', 'application/pdf'))])
     assert response.status_code == 400
     assert next(iter(web.workspaces.values())) is old
-    assert len(c.get('/api/status').json['documents']) == 1
+    assert len(c.get('/api/status').json()['documents']) == 1
     assert len(embedding.batches) == 1
 
 
 def test_cumulative_count_limit_and_session_isolation(client):
     c, _ = client
     payloads = [pdf(f'document {i}') for i in range(10)]
-    response = c.post('/api/upload', data={'files': [(BytesIO(data), f'{i}.pdf') for i, data in enumerate(payloads)]})
-    assert len(response.json['documents']) == 10
+    response = c.post('/api/upload', files=[('files', (f'{i}.pdf', data, 'application/pdf')) for i, data in enumerate(payloads)])
+    assert len(response.json()['documents']) == 10
     assert upload(c, payloads[0]).status_code == 200  # 重复文件不占名额
     assert upload(c, pdf('eleventh')).status_code == 400
-    with web.app.test_client() as other:
-        assert other.get('/api/status').json['documents'] == []
+    with TestClient(web.app) as other:
+        assert other.get('/api/status').json()['documents'] == []
         assert upload(other, pdf('another user')).status_code == 200
-        assert len(other.get('/api/status').json['documents']) == 1
-    assert len(c.get('/api/status').json['documents']) == 10
+        assert len(other.get('/api/status').json()['documents']) == 1
+    assert len(c.get('/api/status').json()['documents']) == 10
 
 
 def test_cumulative_size_limit(client):
@@ -118,11 +119,11 @@ def test_web_uses_agent_and_maps_later_round_citations(client, monkeypatch):
     monkeypatch.setattr(state['rag'], 'ask_agent', agent)
     response = c.post('/api/ask', json={'question':'compare'})
     assert response.status_code == 200
-    assert response.json['sources'][0]['text'] == 'later round evidence'
-    assert response.json['sources'][0]['filename'] == 'first.pdf'
-    assert response.json['model_calls'] == 3
-    assert response.json['status'] == 'limited'
-    assert response.json['elapsed_seconds'] >= 0
+    assert response.json()['sources'][0]['text'] == 'later round evidence'
+    assert response.json()['sources'][0]['filename'] == 'first.pdf'
+    assert response.json()['model_calls'] == 3
+    assert response.json()['status'] == 'limited'
+    assert response.json()['elapsed_seconds'] >= 0
 
 
 def test_agent_failure_is_not_reported_as_success(client, monkeypatch):
@@ -132,7 +133,7 @@ def test_agent_failure_is_not_reported_as_success(client, monkeypatch):
     monkeypatch.setattr(state['rag'], 'ask_agent', lambda q: {'status':'error'})
     response = c.post('/api/ask', json={'question':'q'})
     assert response.status_code == 502
-    assert 'error' in response.json
+    assert 'error' in response.json()
 
 
 def test_stream_endpoint_sends_progress_text_and_final_sources(client, monkeypatch):
@@ -149,7 +150,7 @@ def test_stream_endpoint_sends_progress_text_and_final_sources(client, monkeypat
                     query_plan={},search_history=[],model_calls=2,search_attempts=1,elapsed_seconds=1)
     monkeypatch.setattr(state['rag'], 'ask_agent', agent)
     response = c.post('/api/ask/stream', json={'question':'q'})
-    events = [json.loads(line) for line in response.data.splitlines()]
+    events = [json.loads(line) for line in response.content.splitlines()]
     assert [e['type'] for e in events] == ['progress','progress','answer_delta','progress','done']
     assert events[-1]['result']['sources'][0]['text'] == 'source'
     assert 'evidence' not in events[-1]['result']
@@ -162,7 +163,7 @@ def test_stream_endpoint_returns_error_event(client, monkeypatch):
     state = next(iter(web.workspaces.values()))
     monkeypatch.setattr(state['rag'], 'ask_agent', lambda q, on_event: {'status':'error'})
     response = c.post('/api/ask/stream', json={'question':'q'})
-    events = [json.loads(line) for line in response.data.splitlines()]
+    events = [json.loads(line) for line in response.content.splitlines()]
     assert events[-1]['type'] == 'error'
     assert not any(e['type']=='done' for e in events)
 
@@ -200,15 +201,15 @@ def test_export_preserves_run_after_clear_and_is_session_scoped(client, monkeypa
     monkeypatch.setattr(state['rag'], 'ask_agent', lambda q: result)
     monkeypatch.setattr(web, 'EXPORT_ROOT', tmp_path / 'exports')
     response = c.post('/api/ask', json={'question':'revenue?'})
-    run_id = response.json['run_id']
+    run_id = response.json()['run_id']
     assert run_id
     assert not web.EXPORT_ROOT.exists()
-    with web.app.test_client() as other:
+    with TestClient(web.app) as other:
         assert other.post(f'/api/runs/{run_id}/save', json={}).status_code == 404
     c.delete('/api/documents')
     response = c.post(f'/api/runs/{run_id}/save', json={'browser_elapsed_seconds':14.8})
     assert response.status_code == 200
-    target = Path(response.json['path'])
+    target = Path(response.json()['path'])
     assert (target / 'run.json').is_file()
     assert json.loads((target / 'run.json').read_text())['question'] == 'revenue?'
     assert next((target / 'documents').glob('*.pdf')).read_bytes() == raw
@@ -221,7 +222,7 @@ def test_export_preserves_run_after_clear_and_is_session_scoped(client, monkeypa
     for name, digest in manifest['sha256'].items():
         assert hashlib.sha256((target / name).read_bytes()).hexdigest() == digest
     assert not list(target.rglob('.env'))
-    assert c.post(f'/api/runs/{run_id}/save', json={}).json['path'] == str(target)
+    assert c.post(f'/api/runs/{run_id}/save', json={}).json()['path'] == str(target)
     assert len(list(web.EXPORT_ROOT.iterdir())) == 1
     assert c.post(f'/api/runs/{run_id}/save', json={'browser_elapsed_seconds':-1}).status_code == 400
 
@@ -254,19 +255,16 @@ def test_conversation_is_passed_to_next_request_and_resets_only_on_content_chang
     assert next(iter(web.workspaces.values()))['conversation'].workspace_version == version
     assert upload(c, b'broken').status_code == 400
     assert len(state['conversation'].turns) == 2
-    with web.app.test_client() as other:
+    with TestClient(web.app) as other:
         upload(other, pdf('other'))
-        with other.session_transaction() as session:
-            assert not web.workspaces[session['id']]['conversation'].turns
+        assert not workspace_for(other)['conversation'].turns
     upload(c, pdf('addition'))
-    with c.session_transaction() as session:
-        current = web.workspaces[session['id']]
+    current = workspace_for(c)
     assert not current['conversation'].turns
     assert current['conversation'].workspace_version != version
     c.delete('/api/documents')
     upload(c, raw)
-    with c.session_transaction() as session:
-        assert not web.workspaces[session['id']]['conversation'].turns
+    assert not workspace_for(c)['conversation'].turns
 
 
 def test_stream_completed_history_available_to_next_request(client, monkeypatch):
@@ -280,32 +278,99 @@ def test_stream_completed_history_available_to_next_request(client, monkeypatch)
         return completed_result(question)
     monkeypatch.setattr(state['rag'], 'ask_agent', agent)
     response = c.post('/api/ask/stream', json={'question':'first'})
-    events = [json.loads(line) for line in response.data.splitlines()]
+    events = [json.loads(line) for line in response.content.splitlines()]
     assert events[-1]['type'] == 'done'
     assert c.post('/api/ask', json={'question':'second'}).status_code == 200
     assert len(state['conversation'].turns) == 2
 
 
 def test_stream_disconnect_does_not_commit_history(client, monkeypatch):
+    """直接驱动 ASGI disconnect，避免 TestClient 缓冲流掩盖断线。"""
+    import asyncio
     import threading
     c, _ = client
     upload(c, pdf('report'))
-    state = next(iter(web.workspaces.values()))
-    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    state = workspace_for(c)
+    release, finished = threading.Event(), threading.Event()
     def agent(question, on_event, **kwargs):
         on_event({'type':'progress','message':'started'})
-        started.set()
         assert release.wait(5)
         finished.set()
         return completed_result(question)
     monkeypatch.setattr(state['rag'], 'ask_agent', agent)
-    response = c.post('/api/ask/stream', json={'question':'first'}, buffered=False)
-    iterator = iter(response.response)
-    next(iterator)  # first progress
-    next(iterator)  # worker started
-    assert started.wait(5)
-    response.close()
-    release.set()
+
+    async def drive():
+        disconnected = asyncio.Event()
+        sent_body = False
+        async def receive():
+            nonlocal sent_body
+            if not sent_body:
+                sent_body = True
+                return {'type':'http.request', 'body':b'{"question":"first"}', 'more_body':False}
+            await disconnected.wait()
+            return {'type':'http.disconnect'}
+        async def send(message):
+            if message['type'] == 'http.response.body' and b'started' in message.get('body', b''):
+                disconnected.set()
+        scope = {'type':'http','asgi':{'version':'3.0','spec_version':'2.3'},
+                 'http_version':'1.1','method':'POST','scheme':'http',
+                 'path':'/api/ask/stream','raw_path':b'/api/ask/stream','query_string':b'',
+                 'root_path':'','server':('testserver',80),'client':('testclient',123),
+                 'headers':[(b'content-type',b'application/json'),
+                            (b'cookie', ('session='+c.cookies.get('session')).encode())]}
+        await asyncio.wait_for(web.app(scope, receive, send), timeout=5)
+    try:
+        asyncio.run(drive())
+    finally:
+        release.set()
     assert finished.wait(5)
     with web.lock:
         assert state['conversation'].turns == []
+
+
+def workspace_for(client):
+    encoded = client.cookies.get('session').split('.')[0]
+    session = json.loads(base64.b64decode(encoded))
+    return web.workspaces[session['id']]
+
+
+def test_fastapi_page_static_files_and_schema(client):
+    c, _ = client
+    assert '阅财' in c.get('/').text
+    assert c.get('/static/app.js').status_code == 200
+    schema = c.get('/openapi.json').json()
+    assert '/api/ask/stream' in schema['paths']
+    assert c.get('/docs').status_code == 200
+
+
+@pytest.mark.parametrize('body', [{}, {'question':''}, {'question':'  '}, {'question':4}, {'question':'x'*4001}, []])
+def test_question_validation(client, body):
+    c, _ = client
+    for path in ('/api/ask', '/api/ask/stream'):
+        response = c.post(path, json=body)
+        assert response.status_code == 400
+        assert 'error' in response.json()
+
+
+def test_oversized_upload_and_multipart_errors(client):
+    c, _ = client
+    response = c.post('/api/upload', content=b'x', headers={'content-length':str(102*1024*1024)})
+    assert response.status_code == 413
+    assert 'error' in response.json()
+    response = c.post('/api/upload', files=[('files',(f'{i}.pdf',b'x','application/pdf')) for i in range(11)])
+    assert response.status_code == 400
+    assert 'error' in response.json()
+
+
+def test_upload_limit_without_content_length(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(web, 'MAX_UPLOAD_REQUEST_BYTES', 64)
+    def body():
+        yield b'--boundary\r\nContent-Disposition: form-data; name="files"; filename="x.pdf"\r\n\r\n'
+        yield b'x' * 100
+        yield b'\r\n--boundary--\r\n'
+    response = c.post('/api/upload', content=body(),
+                      headers={'content-type':'multipart/form-data; boundary=boundary'})
+    assert 'content-length' not in response.request.headers
+    assert response.status_code == 413
+    assert 'error' in response.json()
