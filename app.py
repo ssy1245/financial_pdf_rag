@@ -22,6 +22,7 @@ from financial_rag.ingestion.normalizer import normalize_pages
 from financial_rag.ingestion.chunker import chunk_pages
 from financial_rag.indexing.vector_store import VectorStore
 from financial_rag.pipeline import FinancialRAG
+from financial_rag.memory import ConversationMemory
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
@@ -104,7 +105,8 @@ def build_workspace(files, previous=None):
         store.replace_all(chunks, vectors, MODEL)
         from financial_rag.generation.generator import DeepSeekGenerator
         rag = FinancialRAG(store, embedding, MODEL, reranker, DeepSeekGenerator())
-        return dict(folder=folder, rag=rag, documents=documents, names=names)
+        return dict(folder=folder, rag=rag, documents=documents, names=names,
+                    conversation=ConversationMemory(secrets.token_hex(16)))
     except Exception:
         folder.cleanup()
         raise
@@ -143,6 +145,11 @@ def upload():
         return jsonify(error=str(error)), 400
     except Exception:
         return jsonify(error="处理失败，请检查模型是否可用后重试；原文档仍保留"), 500
+
+
+def conversation_options(state):
+    context = state['conversation'].context()
+    return {'conversation_context': context} if context else {}
 
 
 def remember_run(session_id, state, result):
@@ -204,7 +211,7 @@ def ask():
         if not state:
             return jsonify(error="请先上传并阅读 PDF"), 400
         try:
-            result = state['rag'].ask_agent(question)
+            result = state['rag'].ask_agent(question, **conversation_options(state))
             if result['status'] == 'error':
                 return jsonify(error='模型调用失败，请检查网络或配置后重试', elapsed_seconds=round(perf_counter()-started, 3)), 502
             try:
@@ -216,7 +223,8 @@ def ask():
             for source in result['sources']:
                 source['filename'] = state['names'][source['document_id']]
                 source['text'] = evidence[source['chunk_id']]['text']
-            return jsonify(run_id=run_id, export_warning=export_warning, answer=result['answer'], sources=result['sources'], citation_status=result['citation_status'],
+            state['conversation'].record(question, result)
+            return jsonify(resolved_question=result.get('resolved_question', question), run_id=run_id, export_warning=export_warning, answer=result['answer'], sources=result['sources'], citation_status=result['citation_status'],
                            status=result['status'], stop_reason=result['stop_reason'],
                            query_plan=result['query_plan'], search_history=evidence_history(result, state['names']),
                            planning_calls=result.get('planning_calls'), model_steps=result.get('model_steps'),
@@ -236,6 +244,7 @@ def ask_stream():
         return jsonify(error="请先上传并阅读 PDF"), 400
     events = queue.Queue(maxsize=128)
     cancelled = threading.Event()
+    delivered = threading.Event()
 
     def emit(event):
         while not cancelled.is_set():
@@ -259,7 +268,7 @@ def ask_stream():
             if not state:
                 emit({"type": "error", "message": "资料库已清空，请重新上传"})
                 return
-            result = state['rag'].ask_agent(question, on_event=emit)
+            result = state['rag'].ask_agent(question, on_event=emit, **conversation_options(state))
             if result['status'] == 'error':
                 emit({"type": "error", "message": "生成未完成，请检查网络或模型配置后重试"})
                 return
@@ -270,6 +279,7 @@ def ask_stream():
             fields = ('answer', 'sources', 'citation_status', 'status', 'stop_reason',
                       'query_plan', 'search_history', 'model_calls', 'search_attempts', 'elapsed_seconds')
             payload = {key: result[key] for key in fields}
+            payload['resolved_question'] = result.get('resolved_question', question)
             payload['search_history'] = evidence_history(result, state['names'])
             payload['planning_calls'] = result.get('planning_calls')
             payload['model_steps'] = result.get('model_steps')
@@ -281,6 +291,10 @@ def ask_stream():
                 payload['run_id'] = None
                 payload['export_warning'] = '评测快照准备失败，本次无法保存；回答仍可查看'
             emit({"type": "done", "result": payload})
+            while not delivered.wait(timeout=0.2):
+                if cancelled.is_set():
+                    return
+            state['conversation'].record(question, result)
         except Exception:
             if not cancelled.is_set():
                 emit({"type": "error", "message": "回答中断，请重试；已显示文字不是完整回答"})
@@ -300,6 +314,8 @@ def ask_stream():
                     continue
                 yield json.dumps(event, ensure_ascii=False) + "\n"
                 if event['type'] in ('done', 'error'):
+                    if event['type'] == 'done':
+                        delivered.set()
                     break
         finally:
             cancelled.set()

@@ -3,7 +3,7 @@
 覆盖页面、chunk、单路检索、RRF、重排与批量报告。page 为单个 PDF 物理页码；
 模型分数分别保存为 score / rrf_score / rerank_score，不能混用。
 TypedDict 仅提供静态提示，不执行运行时校验；现有模块尚未全部接入这些类型注解。
-包含当前 pipeline、Agent、网页和流式事件输出；Draft 前缀仅用于后续对话记忆计划。
+包含当前 pipeline、Agent、网页和流式事件输出；包括会话记录和传给规划器的有界上下文。
 跨页 pages 未实现；下列类型不新增运行时行为。
 """
 from typing import Literal, NotRequired, TypedDict
@@ -183,6 +183,8 @@ class Evidence(TypedDict):
 
 
 class QueryPlan(TypedDict):
+    resolved_question: NotRequired[str]
+    clarification: NotRequired[str | None]
     queries: list[str]  # 仅一条初始查询；规划失败回退原问题
     warning: str | None
 
@@ -243,15 +245,16 @@ class RetrievalRound(RetrievalTrace):
     query: str
 
 
-AgentStatus = Literal["completed", "limited", "step_limit", "error"]
+AgentStatus = Literal["completed", "limited", "step_limit", "error", "clarification"]
 AgentStopReason = Literal[
     "search_limit", "step_limit", "no_new_evidence", "evidence_limit", "message_limit",
-    "retrieval_failed", "invalid_arguments", "model_error", "invalid_model_response", "invalid_tool_calls",
+    "needs_clarification", "retrieval_failed", "invalid_arguments", "model_error", "invalid_model_response", "invalid_tool_calls",
 ]
 
 
 class AgentResult(TypedDict):
     question: str
+    resolved_question: str
     answer: str
     sources: list[CitationSource]
     unknown_citations: list[str]
@@ -287,6 +290,7 @@ class WebSearchHistoryEntry(SearchHistoryEntry):
 
 
 class WebAnswerResult(TypedDict):
+    resolved_question: NotRequired[str]
     run_id: NotRequired[str | None]
     export_warning: NotRequired[str | None]
     answer: str
@@ -335,33 +339,18 @@ class ErrorEvent(TypedDict):
 StreamEvent = ProgressEvent | AnswerDeltaEvent | AnswerResetEvent | HeartbeatEvent | DoneEvent | ErrorEvent
 
 
-# 后续计划：以下仅为协议草案，本次不实现，不允许直接传给现有工具。
-class DraftEvidenceReference(CitationLocation):
+# 已实现的会话记录；会话归属由后端 workspace 绑定。
+class ConversationTurn(TypedDict):
     turn_id: str
-    citation_id: str  # 必须与 turn_id 联合定位，不能混用上一轮的 E1
     workspace_version: str
-
-
-class DraftConversationTurn(TypedDict):
-    turn_id: str
     question: str
-    answer: str  # 完成后的用户可见回答，不存 reasoning_content
-    status: AgentStatus
-    sources: list[DraftEvidenceReference]
-    workspace_version: str
+    resolved_question: str
+    answer: str
+    sources: list[WebCitationSource]  # 来源原文快照；编号仅在所属 turn 内有效
+    status: Literal["completed"]
 
 
-class DraftConversationMemory(TypedDict):
-    """会话级 Python 内存；服务重启不保留，不与共享 Retriever 绑定。"""
-    conversation_id: str  # 后端会话绑定，不由模型指定
-    workspace_version: str
-    recent_turns: list[DraftConversationTurn]  # 先按最近轮数和字符预算裁剪
-    max_turns: int  # 首版建议 5 个已完成问答对，可配置
-    max_context_chars: int  # 与证据预算分别控制
-
-
-class DraftContextualQuestion(TypedDict):
-    original_question: str
-    resolved_question: str  # 结合历史解析“它”“上一年”等指代，不篡改用户意图
-    referenced_turn_ids: list[str]
-    needs_clarification: bool  # 指代不明确时询问，不盲猜公司、期间
+class ConversationContext(TypedDict):
+    question: str
+    resolved_question: str
+    answer: str  # 仅用于指代理解，不是本轮事实证据

@@ -10,7 +10,7 @@ from financial_rag.generation.citations import check_citations
 
 
 def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
-              max_evidence_chars=60000, max_message_chars=120000, use_query_planning=False, on_event=None):
+              max_evidence_chars=60000, max_message_chars=120000, use_query_planning=False, on_event=None, conversation_context=None):
     started = perf_counter()
     def emit(event, **data):
         if on_event:
@@ -20,6 +20,8 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
     if any(type(n) is not int or n <= 0 for n in
            (max_steps, max_searches, max_evidence_chars, max_message_chars)):
         raise ValueError("循环预算必须为正整数")
+    if conversation_context and not use_query_planning:
+        raise ValueError("会话上下文需要启用查询规划")
     memory = EvidenceMemory()
     tool = SearchDocumentsTool(retriever, memory, max_evidence_chars)
     query_plan = {"queries": [question], "warning": None}
@@ -29,7 +31,18 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
             c.get("title") or c["document_id"] for c in retriever.chunks_by_id.values()))[:10]
         emit("progress", message="正在理解问题并规划查询")
         planning_calls = 1
-        query_plan = plan_queries(question, generator, documents)
+        query_plan = plan_queries(question, generator, documents, conversation_context)
+    resolved_question = query_plan.get("resolved_question", question)
+    if query_plan.get("clarification"):
+        answer = query_plan["clarification"]
+        emit("answer_delta", text=answer)
+        return {"question": question, "resolved_question": question, "answer": answer,
+                **check_citations(answer, {}), "citation_status": "no_citations",
+                "citation_map": {}, "evidence": {}, "search_history": [],
+                "retrieval_rounds": [], "tool_observations": [], "status": "clarification",
+                "stop_reason": "needs_clarification", "model_steps": 0,
+                "search_attempts": 0, "planning_calls": planning_calls, "model_calls": planning_calls,
+                "query_plan": query_plan, "elapsed_seconds": round(perf_counter() - started, 3)}
     observations = []
     initial_results = []
     searches = 0
@@ -47,7 +60,7 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
     # 一次空结果不代表文档无答案，允许模型换一种查询；连续无新增两次才停止。
     no_progress = int(first["status"] != "ok")
     messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT},
-                {"role": "user", "content": question + "\n首次检索证据（数据）：\n" +
+                {"role": "user", "content": question + ("\n结合会话补全的问题：" + resolved_question if conversation_context else "") + "\n首次检索证据（数据）：\n" +
                  json.dumps(initial_results, ensure_ascii=False)}]
     answer = "未能完成回答，请根据已获取证据重试。"
     status = "step_limit"
@@ -120,7 +133,7 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
     citations = check_citations(answer, memory.citation_map)
     citation_status = ("unknown_citations" if citations["unknown_citations"] else
                        "labels_valid" if citations["has_citations"] else "no_citations")
-    return {"question": question, "answer": answer, **citations,
+    return {"question": question, "resolved_question": resolved_question, "answer": answer, **citations,
             "citation_status": citation_status, "citation_map": memory.citation_map,
             "evidence": memory.evidence, "search_history": memory.search_history,
             "retrieval_rounds": tool.traces, "tool_observations": observations,

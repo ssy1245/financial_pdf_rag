@@ -298,3 +298,48 @@ def test_empty_batch_queries_do_not_cancel_later_useful_query():
     assert result['status'] == 'completed'
     assert result['search_attempts'] == 4
     assert result['search_history'][-1]['new_count'] == 1
+
+
+def test_followup_resolves_before_search_and_answer_uses_only_fresh_evidence():
+    history = [{'question':'Apple 2025 revenue?', 'resolved_question':'Apple 2025 revenue?',
+                'answer':'wrong historical amount 999999'}]
+    model = Model(answer('[E1]'))
+    model.generate = Mock(return_value=json.dumps(dict(query='Apple 2024 revenue',
+                            resolved_question='苹果2024年的收入是多少？', clarification=None)))
+    retriever = Retriever()
+    result = run_agent('那上一年呢？', retriever, model, use_query_planning=True,
+                       conversation_context=history)
+    planning = json.loads(model.generate.call_args.args[0][1]['content'])
+    assert planning['conversation_history'] == history
+    assert result['search_history'][0]['query'] == 'Apple 2024 revenue'
+    assert result['resolved_question'] == '苹果2024年的收入是多少？'
+    answering = model.requests[0][0][1]['content']
+    assert '苹果2024年的收入是多少？' in answering
+    assert '那上一年呢？' in answering
+    assert '999999' not in answering
+    assert result['sources'][0]['chunk_id'] == 'a'
+    assert retriever.exclusions == [set()]
+    assert result['model_calls'] == 2
+
+
+@pytest.mark.parametrize('raw', [
+    'broken', '{"query":"unresolved"}',
+    '{"query":null,"resolved_question":null,"clarification":"你指的是哪家公司？"}',
+])
+def test_ambiguous_or_failed_context_planning_never_searches(raw):
+    retriever = Retriever()
+    model = Model()
+    model.generate = Mock(return_value=raw)
+    events = []
+    result = run_agent('它呢？', retriever, model, use_query_planning=True,
+                       conversation_context=[{'question':'compare Apple and Microsoft'}], on_event=events.append)
+    assert result['status'] == 'clarification'
+    assert result['search_attempts'] == 0
+    assert not retriever.exclusions and not model.requests
+    assert result['sources'] == []
+    assert events[-1]['type'] == 'answer_delta'
+
+
+def test_context_requires_planning():
+    with pytest.raises(ValueError):
+        run_agent('q', Retriever(), Model(), conversation_context=[{'question':'previous'}])

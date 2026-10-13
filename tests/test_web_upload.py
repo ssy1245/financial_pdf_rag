@@ -224,3 +224,88 @@ def test_export_preserves_run_after_clear_and_is_session_scoped(client, monkeypa
     assert c.post(f'/api/runs/{run_id}/save', json={}).json['path'] == str(target)
     assert len(list(web.EXPORT_ROOT.iterdir())) == 1
     assert c.post(f'/api/runs/{run_id}/save', json={'browser_elapsed_seconds':-1}).status_code == 400
+
+
+def completed_result(question):
+    return dict(question=question, resolved_question='resolved '+question, answer='answer', sources=[],
+                citation_status='no_citations', evidence={}, status='completed', stop_reason=None,
+                query_plan={}, search_history=[], model_calls=2, search_attempts=1, elapsed_seconds=1,
+                retrieval_rounds=[])
+
+
+def test_conversation_is_passed_to_next_request_and_resets_only_on_content_change(client, monkeypatch):
+    c, _ = client
+    raw = pdf('report')
+    upload(c, raw)
+    state = next(iter(web.workspaces.values()))
+    received = []
+    def agent(question, **kwargs):
+        received.append(kwargs.get('conversation_context', []))
+        return completed_result(question)
+    monkeypatch.setattr(state['rag'], 'ask_agent', agent)
+    assert c.post('/api/ask', json={'question':'first'}).status_code == 200
+    assert received == [[]]
+    assert c.post('/api/ask', json={'question':'followup'}).status_code == 200
+    assert received[1][0]['question'] == 'first'
+    assert received[1][0]['resolved_question'] == 'resolved first'
+    assert len(state['conversation'].turns) == 2
+    version = state['conversation'].workspace_version
+    upload(c, raw)
+    assert next(iter(web.workspaces.values()))['conversation'].workspace_version == version
+    assert upload(c, b'broken').status_code == 400
+    assert len(state['conversation'].turns) == 2
+    with web.app.test_client() as other:
+        upload(other, pdf('other'))
+        with other.session_transaction() as session:
+            assert not web.workspaces[session['id']]['conversation'].turns
+    upload(c, pdf('addition'))
+    with c.session_transaction() as session:
+        current = web.workspaces[session['id']]
+    assert not current['conversation'].turns
+    assert current['conversation'].workspace_version != version
+    c.delete('/api/documents')
+    upload(c, raw)
+    with c.session_transaction() as session:
+        assert not web.workspaces[session['id']]['conversation'].turns
+
+
+def test_stream_completed_history_available_to_next_request(client, monkeypatch):
+    import json
+    c, _ = client
+    upload(c, pdf('report'))
+    state = next(iter(web.workspaces.values()))
+    def agent(question, **kwargs):
+        if question == 'second':
+            assert kwargs['conversation_context'][0]['question'] == 'first'
+        return completed_result(question)
+    monkeypatch.setattr(state['rag'], 'ask_agent', agent)
+    response = c.post('/api/ask/stream', json={'question':'first'})
+    events = [json.loads(line) for line in response.data.splitlines()]
+    assert events[-1]['type'] == 'done'
+    assert c.post('/api/ask', json={'question':'second'}).status_code == 200
+    assert len(state['conversation'].turns) == 2
+
+
+def test_stream_disconnect_does_not_commit_history(client, monkeypatch):
+    import threading
+    c, _ = client
+    upload(c, pdf('report'))
+    state = next(iter(web.workspaces.values()))
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    def agent(question, on_event, **kwargs):
+        on_event({'type':'progress','message':'started'})
+        started.set()
+        assert release.wait(5)
+        finished.set()
+        return completed_result(question)
+    monkeypatch.setattr(state['rag'], 'ask_agent', agent)
+    response = c.post('/api/ask/stream', json={'question':'first'}, buffered=False)
+    iterator = iter(response.response)
+    next(iterator)  # first progress
+    next(iterator)  # worker started
+    assert started.wait(5)
+    response.close()
+    release.set()
+    assert finished.wait(5)
+    with web.lock:
+        assert state['conversation'].turns == []

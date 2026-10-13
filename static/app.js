@@ -48,7 +48,7 @@ function select(files){
 }
 $('files').onchange=e=>{select(e.target.files);e.target.value=''};$('drop').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('files').click()}};
 for(const event of ['dragover','drop'])$('drop').addEventListener(event,e=>e.preventDefault());$('drop').ondragover=()=>$('drop').classList.add('drag');$('drop').ondragleave=()=>$('drop').classList.remove('drag');$('drop').ondrop=e=>{$('drop').classList.remove('drag');select(e.dataTransfer.files)};
-$('upload').onclick=async()=>{busy=true;controls();renderPending();status('正在读取文档并建立索引，首次从本地加载模型可能需要一些时间…');const form=new FormData();selected.forEach(f=>form.append('files',f));try{const data=await api('/api/upload',{method:'POST',body:form});showDocuments(data.documents);selected=[];$('pending').replaceChildren();$('files').value='';status('已准备好，可以针对这 '+data.documents.length+' 份 PDF 提问。')}catch(e){status(e.message+'；已有资料库保持不变。',true)}finally{busy=false;renderPending();controls()}};
+$('upload').onclick=async()=>{busy=true;controls();renderPending();status('正在读取文档并建立索引，首次从本地加载模型可能需要一些时间…');const form=new FormData();selected.forEach(f=>form.append('files',f));try{const data=await api('/api/upload',{method:'POST',body:form});showDocuments(data.documents);selected=[];$('pending').replaceChildren();$('files').value='';status('已准备好，可以针对这 '+data.documents.length+' 份 PDF 提问。资料库内容变化后会重新开始对话上下文。')}catch(e){status(e.message+'；已有资料库保持不变。',true)}finally{busy=false;renderPending();controls()}};
 function message(role,text){const box=document.createElement('article');box.className='message '+role;const title=document.createElement('h3');title.textContent=role==='user'?'你':'阅财 · AI';const body=document.createElement('div');body.textContent=text;box.append(title,body);$('chat').append(box);return box}
 $('form').onsubmit=async e=>{
   e.preventDefault();const question=$('question').value.trim();if(!question||busy||!ready)return;
@@ -74,12 +74,13 @@ $('form').onsubmit=async e=>{
       summary.textContent=`[${source.label}] ${source.filename} · PDF 第 ${source.page} 页`;
       text.textContent=source.text;details.append(summary,text);box.append(details);
     }
-    if(data.citation_status!=='labels_valid'){
+    if(data.status!=='clarification'&&data.citation_status!=='labels_valid'){
       const warning=document.createElement('p');warning.className='warning';warning.textContent='引用缺失或编号异常，请核对原文。';box.append(warning);
     }
     if(data.status!=='completed'){
       const notice=document.createElement('p');notice.className='hint';
       const reasons={
+        needs_clarification:'请补充明确的公司、年份或指标后继续提问。',
         search_limit:'已达到本次检索次数上限，以下回答基于已获取的证据。',
         step_limit:'已达到本次模型调用轮数上限，以下回答基于已获取的证据。',
         no_new_evidence:'本轮没有找到新增证据，以下回答基于已有证据。',
@@ -91,6 +92,7 @@ $('form').onsubmit=async e=>{
       if(['message_limit','retrieval_failed'].includes(data.stop_reason))notice.className='warning';
       box.append(notice);
     }
+    if(data.resolved_question&&data.resolved_question!==question){const resolved=document.createElement('p');resolved.className='hint';resolved.textContent='本次理解的问题：'+data.resolved_question;box.append(resolved)}
     if(data.query_plan?.warning){const warning=document.createElement('p');warning.className='warning';warning.textContent=data.query_plan.warning;box.append(warning)}
     const trace=document.createElement('details'),summary=document.createElement('summary'),list=document.createElement('ol');
     summary.textContent='查看检索过程';
@@ -133,7 +135,7 @@ $('form').onsubmit=async e=>{
       };
       box.append(save,saved);
     }else if(data.export_warning){const warning=document.createElement('p');warning.className='warning';warning.textContent=data.export_warning;box.append(warning)}
-    status((data.status==='completed'?'回答完成':'本次检索已停止')+' · 总用时 '+seconds+' 秒。点击引用可查看原文。');
+    status((data.status==='completed'?'回答完成':data.status==='clarification'?'请补充问题':'本次检索已停止')+' · 总用时 '+seconds+' 秒。点击引用可查看原文。');
     box.scrollIntoView({behavior:'smooth',block:'center'});
   }catch(e){clearInterval(timer);if(box){const warning=document.createElement('p');warning.className='warning';warning.textContent='回答未完成，以上内容仅为部分输出。';box.append(warning)}status(e.message+' · 已用 '+elapsed()+' 秒',true)}
   finally{clearInterval(timer);busy=false;controls()}
