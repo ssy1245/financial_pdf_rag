@@ -5,6 +5,77 @@
 已实现请求内证据记忆、search_documents 工具和显式 Agent loop；ask_agent() 可由模型选择补充检索。
 默认 ask() 保留单轮基线；网页已使用带单条初始查询规划的 ask_agent()。
 
+## 项目现状（2026-10-14）
+
+当前定位：可在本机演示和复测的金融文档 RAG 系统。主流程已贯通；部署扩展、OCR 接入和长期记忆仍需继续实现。
+下表以代码和已保存的实验结果为准，后文保留各阶段的设计与实验记录。
+
+| 能力 | 当前状态 | 实现范围 |
+|---|---|---|
+| 前后端 | 已实现 | HTML/CSS/JavaScript 前端；FastAPI + Uvicorn 后端，无 Node 构建步骤 |
+| 多格式输入 | 首版已实现 | PDF、DOCX、XLSX；统一 Pydantic schema、表格结构、格式专属来源定位 |
+| 检索 | 已实现 | BGE-small dense + BM25 → RRF → BGE reranker；网页分块 300 tokens / overlap 0 |
+| 生成与补查 | 已实现 | DeepSeek API、查询规划、证据不足时补查、已读 chunk 排除、引用映射 |
+| 短期记忆 | 已实现 | 最近 5 轮完整问答；请求内证据累积；进程内保存 |
+| 长期记忆 | 未实现 | 尚无跨会话偏好、结论或历史恢复 |
+| 异步交互 | 已实现 | 异步上传、阻塞任务移交线程池、后台线程及有界队列、NDJSON 回答流 |
+| 存储与复用 | 已实现 | SQLite 存 chunks/向量；内存检索；当前资料库复用解析与向量、共享模型实例 |
+| 检索 benchmark | 已完成开发集实验 | 分块 7 组、embedding 4 模型初测、BGE/Qwen 50 题内容核验 |
+| OCR | 接口已留，实验暂停 | 主应用未接入；PP-StructureV3 成功 4 页，MinerU 首页失败，PaddleOCR-VL 未运行 |
+| 部署 | 本机单进程可运行 | 尚无 Dockerfile/Compose、外部任务队列、登录鉴权或多 worker 状态共享 |
+
+### 架构、异步与部署边界
+
+```text
+浏览器：混合上传 / 追问 / 来源与表格查看
+    ↓ FastAPI（会话隔离、请求校验）
+格式适配器 → 统一 Document / Table / Cell + 来源 → 300-token 检索视图
+    ↓ 本地 BGE-small 编码
+SQLite（chunks / 向量 / 配置）+ 内存 Dense / BM25 索引
+    ↓ 查询规划 → Dense + BM25 → RRF → CrossEncoder
+请求内证据记忆 → DeepSeek → 按信息缺口补查或回答 → 引用映射
+    ↓ 后台工作线程 → 有界事件队列 → 异步 NDJSON 流
+浏览器：实时进度 / 回答 / 逐轮检索记录 / 评测导出
+```
+
+- 上传接口使用 `async/await` 和 `run_in_threadpool`，避免同步解析/编码直接阻塞事件循环。
+- 问答由后台线程执行，通过容量 128 的 `queue.Queue` 传递事件；异步生成器使用 `asyncio.to_thread` 读取队列，并以 `StreamingResponse` 返回进度、回答增量和心跳。协议为 NDJSON。
+- 异步交互不等于模型并行推理。当前全局锁串行使用共享资源；资料库、会话和任务状态都在单进程中，不能直接增加 Uvicorn workers 来扩容。
+- SQLite 提供数据保存，不是向量搜索引擎；dense 相似度由 NumPy 在内存计算。网页工作区是临时目录，重启后不能自动恢复资料库。
+- 当前复用的是模型实例、解析结果、文档向量与索引；没有 Redis、持久任务队列或跨重启解析缓存。生成模型通过 API 调用，项目不管理服务端 attention KV cache。
+- Docker 容器化是后续部署工作，尚未落地。生产部署前需处理固定会话密钥、持久资料库、鉴权、工作进程与推理资源调度；OCR 可作为共享工作服务独立部署。
+
+### 实验报告与可量化结果
+
+**统一入口：[全部实验报告](reports/index.html)**。本机报告及原始结果位于 `outputs/`，该目录被 Git 忽略；新克隆仓库不会自带这些实验产物。`reports/` 保留导航和指向原实验目录的链接。
+
+| 实验 | 状态与范围 | 报告 |
+|---|---|---|
+| FinanceBench 基线 | 10 题试跑与问题定位 | [查看](outputs/financebench/pilot_20261013/report.html) |
+| 分块与截断 | 固定 BGE-small，7 组分块配置 | [查看](outputs/chunk_ablation/financebench_20261013/report.html) |
+| Embedding 初测 | 固定 300/0，4 个模型、10 题 | [查看](outputs/embedding_ablation/financebench_300_0_20261013/report.html) |
+| 证据内容复测 | BGE-small / Qwen3，50 题 | [查看](outputs/embedding_ablation/financebench50_300_0_20261013/report.html) |
+| OCR 解析 | OmniDocBench 固定 100 页；已暂停，未形成排名 | [查看](outputs/ocr_ablation/omnidoc100_20261013/report.html) |
+
+50 题实验语料包括 **41 份完整报告、6,000 页、18,806 个分块**；固定 300 tokens / overlap 0，只比较全库 dense 检索。查询含原始英文问题与目标报告文件名，不按文档过滤，也不运行 BM25、reranker、Agent 或答案生成。
+
+| Top-5 指标 | BGE-small | Qwen3-Embedding-0.6B | 变化 |
+|---|---:|---:|---:|
+| 证据页命中率（50 题） | 36.0% | 52.0% | +16.0 个百分点（相对 +44.4%） |
+| 有效证据内容命中率（49 题） | 28.6% | 38.8% | 约 +10.2 个百分点 |
+
+内容核验排除仅页脚/仅表头命中，数值题核对行名与金额；另有 1 题需版面人工复核，不计入自动内容指标分母。这些是开发集上的参考证据匹配指标，不是回答准确率、完整 RAG 增益或全量 FinanceBench 成绩。应用默认 embedding 仍为 BGE-small；Qwen 尚未替换默认模型。
+
+分块实验发现旧 500 词 / 80 词配置有 **42.0%（1,214/2,891）** 的分块超过 embedding 正文预算；六组 token 分块均未截断。历史检索实验使用旧 PDF 解析入口，不能直接证明新统一表格解析的检索收益。
+
+### 接下来按什么顺序做
+
+1. **先定位解析成本。** OCR 实验保持暂停；后续建议选 10 页代表性输入，每方案先试 2 页，分开测文字识别、版面分析和表格恢复，记录冷启动、预热后耗时及质量。十页是实验规模，不是产品上传上限。
+2. **接入按需 OCR。** 有可靠文字层时原生解析；扫描页/异常区域交给 OCR。对十页正常上传测端到端延迟，再比较轻量、本地 GPU 或外部服务方案；不把当前 Mac CPU 的完整解析耗时当作 OCR 通用速度。
+3. **统一解析回归。** 用冻结问题集检查表头、跨页内容、年份、单位和跨文档口径；单独评估新结构化分块及混合检索/重排的收益。
+4. **补部署基础。** Docker、配置与密钥管理、持久化、任务状态/重试、资源调度和运行监控，再验证吞吐量与成本。
+5. **完善记忆与回答评测。** 短期上下文预算、长期记忆的来源/更新/删除，以及回答正确性、引用支持和证据不足时的处理。
+
 ## 快速启动
 
 ```bash
@@ -36,7 +107,7 @@ uv run app.py
 | ingestion/parser.py | 旧 PDF 实验入口，保留原文块、坐标、页码 | 保留原行为，未接新表格结构 |
 | ingestion/normalizer.py | 块内清洗、保留段落、保守移除重复页脚 | 不恢复复杂版式 |
 | ingestion/chunker.py | 旧实验入口：段落分块、长段切分，500 词/80 词重叠 | 按词而非 token，不跨页 |
-| indexing/embeddings.py | BAAI/bge-small-en-v1.5，归一化向量 | 长输入截断尚待评估 |
+| indexing/embeddings.py | BAAI/bge-small-en-v1.5，归一化向量 | 旧分块存在截断；token 分块已审计，新输入仍需控制预算 |
 | indexing/vector_store.py | SQLite 保存/加载 chunks、float32 向量与模型配置 | 整批替换，无增量更新 |
 | retrieval/dense.py | NumPy 点积检索 | SQLite 仅存储，查询仍在内存完成 |
 | indexing/bm25_index.py、retrieval/sparse.py | TF/DF/IDF、BM25 和正分 Top K | 基础英文分词，内存索引 |
@@ -54,7 +125,7 @@ uv run app.py
 
 当前网页与 pipeline 使用 BGE reranker v2-m3、2048 tokens；生成默认 deepseek-flash。
 Reranker 类及批量对比入口仍默认 MiniLM、512 tokens，不要混淆入口的默认配置。
-统一 CLI、config、正式评估指标等占位模块尚未全面实现。
+统一 CLI、config 等占位模块尚未全面实现；已有独立分块/embedding/证据内容评测入口，端到端回答评测尚未完成。
 
 ## 已跑通的两条流程
 
@@ -440,7 +511,9 @@ python -m financial_rag.evaluation.financebench --phase run --output outputs/fin
 每次尽量只改变一个因素，并复用同一批问题确认改进效果；结构分块的具体模块路线见上文“Chunk 策略修改路径”。
 
 
-### Embedding 模型对比实验（计划）
+### Embedding 模型对比：已完成阶段与后续计划
+
+截至 2026-10-14，已完成四模型初测及 BGE/Qwen 50 题 dense 对比、编码配置记录和实验报告。以下保留完整路线；生产配置切换、完整混合检索收益、稳定性能测量和回答质量验证仍待完成。
 
 - [ ] **建立可切换的 embedding 模型配置。**
   以当前 `BAAI/bge-small-en-v1.5` 为基线，后续选择不同规模、中文/英文/多语言能力的模型进行比较；
@@ -463,7 +536,7 @@ python -m financial_rag.evaluation.financebench --phase run --output outputs/fin
   区分 embedding 改善与后续重排、补查的贡献。保存配置、数据版本、逐题结果和对比表，
   用效果、速度与成本共同决定取舍。当前 10 题用于试跑与诊断，扩大样本并保留未参与调参的测试题后再确定默认模型。
 
-### 多格式文档与记忆（计划）
+### 多格式文档与记忆（部分完成）
 
 - [x] **PDF、Word、Excel 统一输入与检索（首版；复杂结构及冲突评测继续推进）。**
   提供统一上传入口，按格式选择解析器，再接入共同的索引、检索和回答流程。
@@ -495,7 +568,7 @@ python -m financial_rag.evaluation.financebench --phase run --output outputs/fin
 - [ ] **会话与资料隔离：** 明确用户、项目、会话和文档的归属，保证检索、记忆及缓存遵循同一访问范围。
 - [ ] **运行与回归：** 整理配置、启动与部署说明，建立小型端到端回归集；覆盖三类文档、追问、证据不足、更新删除和失败恢复。
 
-实施上先稳住 PDF 与现有评测，再接入 Word/Excel 并统一来源结构，随后完善短期记忆、引入长期记忆。
+PDF/Word/Excel 与统一来源结构首版已接入；下一步完善解析回归、短期记忆，再引入长期记忆。
 文档管理、任务状态和观测随各阶段补齐；每阶段形成能演示、能复测的小闭环。以上为路线记录，本次不新增运行时功能。
 
 ### 分块与截断实测（2026-10-13）
@@ -642,7 +715,7 @@ uv run python -m financial_rag.ingestion report.xlsx --output outputs/parsed_doc
 ### OCR 接口与已知边界
 
 `OCRBackend.recognize(image_bytes, OCRRequest) -> OCRResult` 定义后续模型适配入口；结果要求包含
-元素/表格、引擎和版本。当前**未接入或下载任何 OCR 模型，也不自动执行该接口**。
+元素/表格、引擎和版本。当前**主应用未接入 OCR，也不自动执行该接口**；独立实验环境已准备模型并开始试跑，随后按用户要求暂停，详见下节。
 无文字页以及含大幅图像的混合页生成页码/区域级 `needs_ocr` 请求；检测是启发式，空白页也可能进入待核验列表。
 混合 PDF 的可读内容可以入库，界面及检索上下文会提示未识别页；纯扫描 PDF 因无可索引内容会拒绝入库并明确提示 OCR 未接入。
 
@@ -661,3 +734,27 @@ uv run python -m financial_rag.ingestion report.xlsx --output outputs/parsed_doc
 真实文档冒烟检查：现有 `BESTBUY_2024Q2_10Q.pdf` 全部 30 页完成解析，原生检测返回 56 个候选表、
 6763 个单元格和 543 个检索片段；实际 BGE tokenizer 的片段上限为 300 tokens。
 这项检查验证管线与来源有效性，候选表数量不代表人工确认的表格识别准确率。未调用生成 API，也未重跑 embedding 对比。
+
+
+## OCR 公开基准实验（截至 2026-10-14：已暂停）
+
+从 OmniDocBench 固定抽取 100 页，保存数据版本、图片哈希、分层清单和原始标注。采用完整文档解析方案对比：
+
+| 方案 | 本机尝试方式 | 当前结果 |
+|---|---|---|
+| PP-StructureV3 | PaddleOCR 完整管线，CPU；关闭公式/图表/印章识别 | 4 页成功，约 145–216 秒/页 |
+| PaddleOCR-VL-1.6 | 已准备模型及完整管线 + 本地 MLX 服务适配脚本 | 尚未执行推理，兼容性未验证 |
+| MinerU 4.0.12 | standard，图像 OCR，本地 llama.cpp 后端 | 首页尝试失败，需排查 |
+
+当前机器为 16 GiB Apple Silicon Mac。上述 PP 耗时来自少量页面，包含完整解析与可能的首次初始化成本，不能推断其他硬件吞吐量，也不能得出三方案质量排名。
+计划采用官方评测代码比较文字 Edit Distance、表格 TEDS/TEDS-S 和阅读顺序；已跑通 PP 单页评测冒烟，未完成 100 页正式比较，不报告官方 Overall。
+
+样本含报告类 40 页、复杂表格 20 页、模糊扫描 5 页、其他版式 20 页及补足样本 15 页。报告类含技术资料，不全是财报；语言为简体中文 57、英文 36、繁体中文 4、中英混合 3 页。
+20 页用于适配、80 页预留比较；文件名只能近似推断同源文档，不能保证严格文档隔离。公开标注也不提供本项目所需的金融事实准确率。
+
+- 样本与状态：`outputs/ocr_ablation/omnidoc100_20261013/sample_manifest.json`、`experiment_state.json`。
+- 准备与运行脚本：`scripts/prepare_ocr_sample.py`、`run_ocr_paddle.py`、`run_ocr_mineru.py`。
+- 评测与报告：`scripts/evaluate_ocr.py`、`build_ocr_report.py`；报告保留失败状态，未评测项不记成零分。
+- 独立环境：`.venv-ocr`、`.venv-mineru`、`.venv-ocr-eval`，依赖锁定快照在实验目录；与主应用 `.venv` 分开。
+
+推理已停止，模型、样本和已完成结果保留。缩小样本和恢复执行仍是后续工作，本次文档更新不启动实验。
