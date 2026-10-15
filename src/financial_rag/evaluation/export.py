@@ -56,7 +56,8 @@ def snapshot_run(state, result, root):
                   'reranker_max_length': getattr(retriever.reranker, 'max_length', None),
                   'generation_model': getattr(state['rag'].generator, 'model', None),
                   'candidate_k': retriever.candidate_k, 'top_k': retriever.top_k, 'rrf_k': retriever.rrf_k,
-                  'chunking': {'max_tokens':300,'overlap_tokens':0,'table_strategy':'row_with_header','schema_version':'1.0','parser_version':'native-v1'}, 'agent_budgets':budgets,
+                  'rerank_threshold': getattr(retriever, 'rerank_threshold', None),
+                  'chunking': {'max_tokens':300,'overlap_tokens':0,'table_strategy':'row_with_header','schema_version':'1.0','parser_versions':sorted({c.get('parser_version', 'legacy') for c in retriever.chunks})}, 'agent_budgets':budgets,
                   'use_query_planning':True, 'model_revisions':revisions}
         write_json(target / 'config.json', config)
         versions = {}

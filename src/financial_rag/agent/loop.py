@@ -1,7 +1,7 @@
 """工具循环入口；固定单轮 ask() 保留作为对照。"""
 import json
 from time import perf_counter
-from financial_rag.agent.planner import plan_queries
+from financial_rag.agent.planner import plan_queries, plan_batch_queries
 
 from financial_rag.memory import EvidenceMemory
 from financial_rag.retrieval.tool import SearchDocumentsTool, tool_error
@@ -10,7 +10,8 @@ from financial_rag.generation.citations import check_citations
 
 
 def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
-              max_evidence_chars=60000, max_message_chars=120000, use_query_planning=False, on_event=None, conversation_context=None):
+              max_evidence_chars=60000, max_message_chars=120000, use_query_planning=False, on_event=None, conversation_context=None,
+              initial_query_count=1, initial_evidence_k=None):
     started = perf_counter()
     def emit(event, **data):
         if on_event:
@@ -22,6 +23,12 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
         raise ValueError("循环预算必须为正整数")
     if conversation_context and not use_query_planning:
         raise ValueError("会话上下文需要启用查询规划")
+    if initial_query_count is not None and (type(initial_query_count) is not int or not 1 <= initial_query_count <= 4):
+        raise ValueError('initial_query_count must be None (adaptive) or 1..4')
+    if initial_query_count != 1 and (not use_query_planning or conversation_context):
+        raise ValueError('Batch initial planning requires an independent question and query planning')
+    if initial_evidence_k is not None and (type(initial_evidence_k) is not int or not 1 <= initial_evidence_k <= retriever.candidate_k):
+        raise ValueError('Invalid initial evidence budget')
     memory = EvidenceMemory()
     tool = SearchDocumentsTool(retriever, memory, max_evidence_chars)
     query_plan = {"queries": [question], "warning": None}
@@ -31,7 +38,8 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
             c.get("title") or c["document_id"] for c in retriever.chunks_by_id.values()))[:10]
         emit("progress", message="正在理解问题并规划查询")
         planning_calls = 1
-        query_plan = plan_queries(question, generator, documents, conversation_context)
+        query_plan = (plan_queries(question, generator, documents, conversation_context) if initial_query_count == 1
+                      else plan_batch_queries(question, generator, documents, initial_query_count))
     resolved_question = query_plan.get("resolved_question", question)
     if query_plan.get("clarification"):
         answer = query_plan["clarification"]
@@ -47,18 +55,29 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
     initial_results = []
     searches = 0
     stop_reason = None
-    # 初始只查一次；每次后续检索前必须由模型读取累计证据并指出缺口。
-    query = query_plan["queries"][0]
-    emit("progress", message="正在进行第 1 次检索", query=query)
-    first = tool.execute("search_documents", json.dumps({"query": query}), initial=True)
-    searches = 1
-    observations.append({"tool_call_id": None, "result": first})
-    initial_results.append(first)
-    emit("progress", message=f"第 1 次检索完成，新增 {first.get('new_count', 0)} 条证据")
-    if first.get("error", {}).get("code") == "evidence_limit":
-        stop_reason = "evidence_limit"
+    # Single-query defaults preserve the old loop. Batch mode shares a TOTAL
+    # initial chunk budget, distributed by quotient/remainder across queries.
+    total_k = initial_evidence_k or retriever.top_k
+    initial_queries = query_plan['queries'][:min(max_searches,total_k)]
+    no_progress = 0
+    for index,query in enumerate(initial_queries):
+        quota=total_k//len(initial_queries)+int(index<total_k%len(initial_queries))
+        emit('progress',message=f'正在进行第 {index+1} 次初始检索',query=query)
+        args={'query':query}
+        if len(initial_queries)>1 or initial_evidence_k is not None:
+            args['top_k']=quota
+        first=tool.execute('search_documents',json.dumps(args),initial=True)
+        searches+=1
+        observations.append({'tool_call_id':None,'result':first})
+        initial_results.append(first)
+        emit('progress',message=f'初始检索完成，新增 {first.get("new_count",0)} 条证据')
+        if first['status']=='ok':no_progress=0
+        else:no_progress+=1
+        if first.get('error',{}).get('code')=='evidence_limit':
+            stop_reason='evidence_limit';break
+    initial_searches=searches
+    initial_chunk_ids=list(memory.evidence)
     # 一次空结果不代表文档无答案，允许模型换一种查询；连续无新增两次才停止。
-    no_progress = int(first["status"] != "ok")
     messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT},
                 {"role": "user", "content": question + ("\n结合会话补全的问题：" + resolved_question if conversation_context else "") + "\n首次检索证据（数据）：\n" +
                  json.dumps(initial_results, ensure_ascii=False)}]
@@ -139,4 +158,7 @@ def run_agent(question, retriever, generator, *, max_steps=7, max_searches=8,
             "retrieval_rounds": tool.traces, "tool_observations": observations,
             "status": status, "stop_reason": stop_reason, "model_steps": steps,
             "search_attempts": searches, "planning_calls": planning_calls, "model_calls": planning_calls + steps,
+            "initial_searches":initial_searches,"initial_chunk_ids":initial_chunk_ids,
+            "initial_queries_not_executed":query_plan['queries'][initial_searches:],
+            "initial_query_execution_capacity":min(max_searches,total_k),
             "query_plan": query_plan, "elapsed_seconds": round(perf_counter() - started, 3)}

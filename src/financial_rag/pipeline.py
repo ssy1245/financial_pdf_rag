@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
+from financial_rag.config import RETRIEVAL_DEFAULTS
 from financial_rag.retrieval.retriever import Retriever
 from financial_rag.indexing.vector_store import VectorStore
 from financial_rag.generation.citations import check_citations
@@ -16,10 +17,11 @@ from financial_rag.generation.prompt import build_messages
 
 class FinancialRAG:
     def __init__(self, store, embedding_model, embedding_model_name,
-                 reranker, generator, candidate_k=20, top_k=5, rrf_k=60):
+                 reranker, generator, candidate_k=20, top_k=5, rrf_k=60, rerank_threshold=None):
         self.retriever = Retriever(
             store, embedding_model, embedding_model_name, reranker,
             candidate_k=candidate_k, top_k=top_k, rrf_k=rrf_k,
+            rerank_threshold=rerank_threshold,
         )
         self.chunks_by_id = self.retriever.chunks_by_id
         self.generator = generator
@@ -65,9 +67,11 @@ def main():
     parser.add_argument("--reranker-model", default="BAAI/bge-reranker-v2-m3")
     parser.add_argument("--reranker-max-length", type=int, default=2048)
     parser.add_argument("--model", default="deepseek-flash")
-    parser.add_argument("--candidate-k", type=int, default=20)
-    parser.add_argument("--top-k", type=int, default=5)
-    parser.add_argument("--rrf-k", type=int, default=60)
+    parser.add_argument("--candidate-k", type=int, default=RETRIEVAL_DEFAULTS["candidate_k"])
+    parser.add_argument("--top-k", type=int, default=RETRIEVAL_DEFAULTS["top_k"])
+    parser.add_argument("--rrf-k", type=int, default=RETRIEVAL_DEFAULTS["rrf_k"])
+    parser.add_argument("--rerank-threshold", type=float, default=RETRIEVAL_DEFAULTS["rerank_threshold"])
+    parser.add_argument("--no-rerank-threshold", action="store_true", help="关闭分数过滤，复现纯TopK")
     parser.add_argument("--output", type=Path, help="保存完整检索过程与回答 JSON")
     args = parser.parse_args()
     if not args.question.strip() or not (args.candidate_k >= args.top_k > 0) or args.rrf_k < 0 or args.reranker_max_length <= 0:
@@ -85,12 +89,14 @@ def main():
         reranker=Reranker(args.reranker_model, args.reranker_max_length),
         generator=generator, candidate_k=args.candidate_k,
         top_k=args.top_k, rrf_k=args.rrf_k,
+        rerank_threshold=None if args.no_rerank_threshold else args.rerank_threshold,
     )
     result = rag.ask_agent(args.question) if args.agent else rag.ask(args.question)
     result["config"] = {
         "embedding_model": args.embedding_model, "reranker_model": args.reranker_model,
         "reranker_max_length": args.reranker_max_length, "generation_model": args.model,
         "candidate_k": args.candidate_k, "top_k": args.top_k, "rrf_k": args.rrf_k,
+        "rerank_threshold": rag.retriever.rerank_threshold,
     }
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

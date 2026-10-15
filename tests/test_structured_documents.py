@@ -185,3 +185,87 @@ def test_pdf_uneven_right_edges_do_not_create_phantom_columns(tmp_path):
     table=parsed.tables[0]
     assert table.columns==2
     assert next(c for c in table.cells if 'Merged header' in c.text).column_span==2
+
+
+
+def test_borderless_year_alignment_with_baseline_jitter(tmp_path):
+    path=tmp_path/'years.pdf'
+    with pymupdf.open() as pdf:
+        page=pdf.new_page()
+        page.insert_text((40,40),'Balance sheet (USD millions)')
+        page.insert_text((40,60),'At December 31,')
+        page.insert_text((380,60),'2022')
+        page.insert_text((480,60),'2021')
+        for i,(label,a,b) in enumerate([('Inventories','2,388','3,055'),
+                ('Prepaid expenses','8,358','6,906'),('Total current assets','37,857','36,728'),
+                ('Total current liabilities','50,171','47,160')]):
+            y=85+i*25
+            page.insert_text((40,y+1.7),label)
+            # Right aligned numeric columns; previous-year baseline comes first in y sort.
+            for x,text,dy in [(404.5,a,.009),(504.5,b,0)]:
+                page.insert_text((x-pymupdf.get_text_length(text,fontsize=11),y+dy),text)
+        pdf.save(path)
+    doc=parse_document(path)
+    assert len(doc.tables)==1
+    table=doc.tables[0]
+    last={c.column:c for c in table.cells if c.row==5}
+    assert last[2].text=='50,171' and last[3].text=='47,160'
+    chunks=chunk_document(doc,Tokenizer(),300)
+    target=next(c for c in chunks if 'Total current liabilities' in c['text'])
+    assert 'C2 [2022]: 50,171' in target['text']
+    assert 'C3 [2021]: 47,160' in target['text']
+    assert 'USD millions' in target['text']
+    assert target['header_cell_refs'] and target['cell_refs']
+    assert doc.parser_version=='native-v2'
+
+
+def test_borderless_prose_and_unaligned_numbers_not_guessed(tmp_path):
+    path=tmp_path/'prose.pdf'
+    with pymupdf.open() as pdf:
+        page=pdf.new_page()
+        page.insert_text((40,50),'Revenue in 2022 increased over 2021.')
+        for i in range(5):page.insert_text((40,80+i*20),f'Note {i}: revenue was 100 and 200.')
+        pdf.save(path)
+    doc=parse_document(path)
+    assert not doc.tables
+    assert any('Revenue in 2022' in e.text for e in doc.elements)
+
+
+def test_excel_year_value_unit_associations_survive_chunks(tmp_path):
+    doc=parse_document(excel_file(tmp_path/'years.xlsx'))
+    chunks=chunk_document(doc,Tokenizer(),300)
+    target=next(c for c in chunks if 'Margin' in c['text'])
+    assert 'USD millions' in target['text']
+    assert 'C2 [2024]: 0 [format=0.0%]' in target['text']
+    assert 'C3 [2025]: -' in target['text']
+    assert target['source']['cell_range']=='B4:D4'
+
+
+def test_word_years_preserve_negative_decimal_values(tmp_path):
+    path=tmp_path/'years.docx';doc=Word();doc.add_paragraph('USD millions')
+    table=doc.add_table(rows=2,cols=3)
+    for i,v in enumerate(['Metric','2022','2021']):table.cell(0,i).text=v
+    for i,v in enumerate(['Profit','(12.50)','0']):table.cell(1,i).text=v
+    doc.save(path)
+    chunks=chunk_document(parse_document(path),Tokenizer(),300)
+    row=next(c for c in chunks if 'Profit' in c['text'])
+    assert 'C2 [2022]: (12.50)' in row['text'] and 'C3 [2021]: 0' in row['text']
+    assert 'USD millions' in row['text']
+
+
+
+def test_borderless_currency_symbols_are_not_dropped(tmp_path):
+    path=tmp_path/'currency.pdf'
+    with pymupdf.open() as pdf:
+        page=pdf.new_page()
+        page.insert_text((380,60),'2022');page.insert_text((480,60),'2021')
+        for i in range(3):
+            y=90+i*25
+            page.insert_text((40,y),f'Metric {i}')
+            for x in (380,480):
+                page.insert_text((x-12,y),'$')
+                page.insert_text((x,y),'100')
+        pdf.save(path)
+    doc=parse_document(path)
+    assert len(doc.tables)==1
+    assert len([c for c in doc.tables[0].cells if c.text=='$ 100'])==6

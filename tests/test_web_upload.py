@@ -21,7 +21,9 @@ def pdf(text):
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
+    monkeypatch.setattr(web, "LIBRARY_ROOT", tmp_path / "libraries")
+    monkeypatch.setattr(web.app, "middleware_stack", None)
     class Embedding:
         def __init__(self):
             self.batches = []
@@ -420,3 +422,127 @@ def test_scanned_pdf_rejected_with_explicit_ocr_reason(client):
         doc.new_page();raw=doc.tobytes()
     response=upload(c,raw)
     assert response.status_code==400 and 'OCR' in response.json()['error']
+
+
+
+def test_saved_library_restores_in_fresh_app_without_reencoding(client, monkeypatch):
+    c, embedding = client
+    raw = pdf('persisted revenue 321')
+    upload(c, raw)
+    state = workspace_for(c)
+    ids = set(state['rag'].chunks_by_id)
+    cookie = c.cookies.get('session')
+    # A fresh app module rebuilds middleware and in-memory caches from disk.
+    fresh_spec = importlib.util.spec_from_file_location('restarted_web', Path(web.__file__))
+    fresh = importlib.util.module_from_spec(fresh_spec)
+    fresh_spec.loader.exec_module(fresh)
+    monkeypatch.setattr(fresh, 'LIBRARY_ROOT', web.LIBRARY_ROOT)
+    monkeypatch.setattr(fresh, 'models', web.models)
+    monkeypatch.setattr(fresh, 'document_tokenizer', lambda: (_ for _ in ()).throw(AssertionError('must not reparse')))
+    with TestClient(fresh.app) as restarted:
+        restarted.cookies.set('session', cookie)
+        response = restarted.get('/api/status')
+        assert response.status_code == 200
+        assert len(response.json()['documents']) == 1
+        restored = next(iter(fresh.workspaces.values()))
+        assert restored['rag'] is None  # Listing does not load models.
+        did = next(iter(restored['names']))
+        assert restarted.get(f'/api/documents/{did}/original').content == raw
+        session_id = next(iter(fresh.workspaces))
+        fresh.get_workspace(session_id, hydrate=True)
+        assert set(restored['rag'].chunks_by_id) == ids
+        assert len(embedding.batches) == 1
+        assert not restored['conversation'].turns
+        monkeypatch.setattr(restored['rag'], 'ask_agent', lambda q: completed_result(q))
+        assert restarted.post('/api/ask', json={'question':'recovered?'}).status_code == 200
+
+
+def test_delete_document_removes_all_stages_and_survives_restart(client, monkeypatch):
+    c, embedding = client
+    upload(c, pdf('obsolete revenue 111'), 'old.pdf')
+    upload(c, pdf('retained revenue 222'), 'keep.pdf')
+    state = workspace_for(c)
+    removed = state['documents'][0]['document_id']
+    with TestClient(web.app) as other:
+        assert other.delete(f'/api/documents/{removed}').status_code == 404
+    response = c.delete(f'/api/documents/{removed}')
+    assert [d['name'] for d in response.json()['documents']] == ['keep.pdf']
+    assert c.get(f'/api/documents/{removed}/original').status_code == 404
+    assert c.get(f'/api/documents/{removed}/structure').status_code == 404
+    assert len(embedding.batches) == 2
+    web.workspaces.clear()
+    assert len(c.get('/api/status').json()['documents']) == 1
+    sid = next(iter(web.workspaces))
+    restored = web.get_workspace(sid, hydrate=True)
+    assert removed not in {x['document_id'] for x in restored['rag'].retriever.chunks}
+    monkeypatch.setattr(embedding, 'encode_query', lambda q: np.array([1.,0.]), raising=False)
+    class Rank:
+        last_truncated_chunk_ids = []
+        def rerank(self, query, candidates, top_k):
+            return [{**x, 'rerank_score':1.} for x in candidates[:top_k]]
+    restored['rag'].retriever.reranker = Rank()
+    trace = restored['rag'].retrieve('obsolete revenue 111')
+    for stage in ('dense','bm25','hybrid','reranked'):
+        assert all(restored['rag'].chunks_by_id[x['chunk_id']]['document_id'] != removed for x in trace[stage])
+    assert not restored['conversation'].turns
+    remaining = next(iter(restored['names']))
+    assert c.delete(f'/api/documents/{remaining}').json()['documents'] == []
+    web.workspaces.clear()
+    assert c.get('/api/status').json()['documents'] == []
+
+
+def test_publish_failure_keeps_saved_library_and_index(client, monkeypatch):
+    c, embedding = client
+    upload(c, pdf('original saved'))
+    old = workspace_for(c)
+    from financial_rag.library import LibraryStore
+    def fail(*args):raise OSError('disk full')
+    with monkeypatch.context() as m:
+        m.setattr(LibraryStore, '_publish', fail)
+        assert upload(c, pdf('new failed')).status_code == 500
+    assert workspace_for(c) is old
+    assert Path(old['folder'].name).exists()
+    web.workspaces.clear()
+    assert len(c.get('/api/status').json()['documents']) == 1
+    assert 'original saved' in web.get_workspace(next(iter(web.workspaces)), hydrate=True)['rag'].retriever.chunks[0]['text']
+
+
+def test_delete_failure_keeps_original_saved_state(client, monkeypatch):
+    c, _ = client
+    upload(c, pdf('first'))
+    upload(c, pdf('second'))
+    old = workspace_for(c)
+    from financial_rag.library import LibraryStore
+    def fail(*args):raise OSError('disk full')
+    with monkeypatch.context() as m:
+        m.setattr(LibraryStore, '_publish', fail)
+        assert c.delete('/api/documents/'+old['documents'][0]['document_id']).status_code == 500
+    assert workspace_for(c) is old
+    web.workspaces.clear()
+    assert len(c.get('/api/status').json()['documents']) == 2
+
+
+def test_without_api_key_upload_restore_and_delete_work(client, monkeypatch):
+    c, _ = client
+    monkeypatch.delenv('DEEPSEEK_API_KEY')
+    assert upload(c, pdf('offline document')).status_code == 200
+    web.workspaces.clear()
+    status = c.get('/api/status').json()
+    assert len(status['documents']) == 1 and not status['key_ready']
+    assert c.post('/api/ask', json={'question':'q'}).status_code == 400
+    assert c.post('/api/ask/stream', json={'question':'q'}).status_code == 400
+    assert c.delete('/api/documents').status_code == 200
+    web.workspaces.clear()
+    assert c.get('/api/status').json()['documents'] == []
+
+
+def test_corrupt_manifest_is_reported_not_overwritten(client):
+    c, _ = client
+    upload(c, pdf('preserve this'))
+    old = workspace_for(c)
+    manifest = Path(old['folder'].name)/'manifest.json'
+    manifest.write_text('broken')
+    web.workspaces.clear()
+    assert c.get('/api/status').status_code == 503
+    assert upload(c, pdf('do not overwrite')).status_code == 500
+    assert manifest.read_text() == 'broken'

@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);let selected=[],ready=false,busy=false;
 function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error)}
-function controls(){ $('upload').disabled=busy||!selected.length;$('files').disabled=busy;$('clear').disabled=busy;$('question').disabled=busy||!ready;$('send').disabled=busy||!ready; }
+function controls(){ document.querySelectorAll('.delete-document').forEach(b=>b.disabled=busy); $('upload').disabled=busy||!selected.length;$('files').disabled=busy;$('clear').disabled=busy;$('question').disabled=busy||!ready;$('send').disabled=busy||!ready; }
 async function api(path,options={}){const response=await fetch(path,options);let data;try{data=await response.json()}catch{throw Error('服务返回异常，请确认后端仍在运行')}if(!response.ok)throw Error(data.error||'请求失败');return data}
 async function streamAnswer(question,onEvent){
   const response=await fetch('/api/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question})});
@@ -19,7 +19,7 @@ async function streamAnswer(question,onEvent){
     if(!result)throw Error('连接中断，回答尚未完成');return result;
   }finally{await reader.cancel();reader.releaseLock()}
 }
-function showDocuments(documents){ready=documents.length>0;$('documents').replaceChildren();for(const d of documents){const li=document.createElement('li');li.textContent=`▤ ${d.name} · ${d.pages!=null?d.pages+' 页':(d.sheets?.length?d.sheets.length+' 张工作表':'Word 正文')} · ${d.tables??0} 张表${d.empty_pages?' · '+d.empty_pages+' 页待 OCR 核验':''}`;if(d.document_id){const original=document.createElement('a');original.textContent=' 下载原文';original.href='/api/documents/'+encodeURIComponent(d.document_id)+'/original';li.append(original);const structure=document.createElement('button');structure.type='button';structure.textContent='查看结构';structure.className='text-button';structure.onclick=()=>showStructure(d.document_id,li);li.append(structure)}if(d.warnings?.length)li.title=d.warnings.join('\n');$('documents').append(li)}if(!ready){const li=document.createElement('li');li.textContent='还没有文档';$('documents').append(li)}controls()}
+function showDocuments(documents){ready=documents.length>0;$('documents').replaceChildren();for(const d of documents){const li=document.createElement('li');li.textContent=`▤ ${d.name} · ${d.pages!=null?d.pages+' 页':(d.sheets?.length?d.sheets.length+' 张工作表':'Word 正文')} · ${d.tables??0} 张表${d.empty_pages?' · '+d.empty_pages+' 页待 OCR 核验':''}`;if(d.document_id){const original=document.createElement('a');original.textContent=' 下载原文';original.href='/api/documents/'+encodeURIComponent(d.document_id)+'/original';li.append(original);const structure=document.createElement('button');structure.type='button';structure.textContent='查看结构';structure.className='text-button';structure.onclick=()=>showStructure(d.document_id,li);li.append(structure);const remove=document.createElement('button');remove.type='button';remove.textContent='删除';remove.className='text-button delete-document';remove.setAttribute('aria-label','删除 '+d.name);remove.onclick=()=>deleteDocument(d);li.append(remove)}if(d.warnings?.length)li.title=d.warnings.join('\n');$('documents').append(li)}if(!ready){const li=document.createElement('li');li.textContent='还没有文档';$('documents').append(li)}controls()}
 function renderPending(){
   $('pending').replaceChildren();
   for(const file of selected){
@@ -141,8 +141,8 @@ $('form').onsubmit=async e=>{
   }catch(e){clearInterval(timer);if(box){const warning=document.createElement('p');warning.className='warning';warning.textContent='回答未完成，以上内容仅为部分输出。';box.append(warning)}status(e.message+' · 已用 '+elapsed()+' 秒',true)}
   finally{clearInterval(timer);busy=false;controls()}
 };
-$('clear').onclick=async()=>{busy=true;controls();try{await api('/api/documents',{method:'DELETE'});showDocuments([]);$('chat').replaceChildren();status('资料库已清空。')}catch(e){status(e.message,true)}finally{busy=false;controls()}};
-api('/api/status').then(data=>{showDocuments(data.documents);if(!data.key_ready)status('请在项目 .env 配置 DEEPSEEK_API_KEY，然后重启服务。',true);else if(ready)status('资料库已就绪，可以继续提问。')}).catch(e=>status(e.message,true));
+$('clear').onclick=async()=>{if(!confirm('清空资料库中的全部文档？此操作会删除已保存的原文和检索索引。'))return;busy=true;controls();try{await api('/api/documents',{method:'DELETE'});showDocuments([]);$('chat').replaceChildren();status('资料库已清空。')}catch(e){status(e.message,true)}finally{busy=false;controls()}};
+api('/api/status').then(data=>{showDocuments(data.documents);if(!data.key_ready)status('请在项目 .env 配置 DEEPSEEK_API_KEY，然后重启服务。',true);else if(ready)status('已恢复本地资料库，可以继续提问；本次从新的对话上下文开始。')}).catch(e=>status(e.message,true));
 
 async function showStructure(id,container,tableId){
   try{
@@ -164,4 +164,12 @@ async function showStructure(id,container,tableId){
     }
     const link=document.createElement('a');link.href='/api/documents/'+encodeURIComponent(id)+'/structure';link.target='_blank';link.rel='noopener';link.textContent='打开完整结构 JSON（含段落、单元格和定位）';panel.append(link);container.append(panel);
   }catch(error){status(error.message,true)}
+}
+
+async function deleteDocument(doc){
+  if(busy||!confirm('删除“'+doc.name+'”？原文和检索索引将从资料库移除，对话上下文也会重置。'))return;
+  busy=true;controls();
+  try{const data=await api('/api/documents/'+encodeURIComponent(doc.document_id),{method:'DELETE'});
+    showDocuments(data.documents);$('chat').replaceChildren();status('已删除文档并更新索引。可以针对剩余资料重新提问。');
+  }catch(error){status(error.message,true)}finally{busy=false;controls()}
 }

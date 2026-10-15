@@ -105,7 +105,7 @@ class OCRBackend(Protocol):
 
 class Document(BaseModel):
     schema_version: str = "1.0"
-    parser_version: str = "native-v1"
+    parser_version: str = "native-v2"
     document_id: str  # SHA256 of original bytes: immutable source version
     filename: str
     format: Literal["pdf", "docx", "xlsx"]

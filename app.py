@@ -29,13 +29,24 @@ from financial_rag.ingestion.adapters import parse_document
 from financial_rag.ingestion.structured_chunker import chunk_document
 from financial_rag.ingestion.document import provenance
 from financial_rag.indexing.vector_store import VectorStore
+from financial_rag.config import RETRIEVAL_DEFAULTS
 from financial_rag.pipeline import FinancialRAG
 from financial_rag.memory import ConversationMemory
+from financial_rag.library import LibraryStore, LibraryError, session_secret
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 app = FastAPI(title="Financial PDF RAG", version="0.1.0")
-app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32), same_site="strict")
+LIBRARY_ROOT = Path(os.getenv("RAG_LIBRARY_ROOT", str(ROOT / "storage/libraries")))
+
+
+class SavedSessionMiddleware(SessionMiddleware):
+    def __init__(self, app):
+        super().__init__(app, secret_key=session_secret(LIBRARY_ROOT), same_site="strict",
+                         max_age=365 * 24 * 60 * 60)
+
+
+app.add_middleware(SavedSessionMiddleware)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -101,6 +112,11 @@ async def http_error(request, exc):
     return error_response(str(exc.detail), exc.status_code)
 
 
+@app.exception_handler(LibraryError)
+async def library_error(request, exc):
+    return error_response(str(exc), 503)
+
+
 MODEL = "BAAI/bge-small-en-v1.5"
 lock = threading.RLock()
 workspaces = {}
@@ -127,6 +143,33 @@ def models():
 def document_tokenizer():
     from transformers import AutoTokenizer
     return AutoTokenizer.from_pretrained(ROOT / "models/bge-small-en-v1.5", local_files_only=True)
+
+
+def get_workspace(session_id, *, hydrate=False):
+    """Restore metadata without model loading; hydrate only for retrieval or mutation."""
+    state = workspaces.get(session_id)
+    if state is None:
+        state = LibraryStore(LIBRARY_ROOT).read(session_id)
+        if state:
+            state.update(rag=None, conversation=ConversationMemory(secrets.token_hex(16)))
+            workspaces[session_id] = state
+    if state and hydrate and state['rag'] is None:
+        try:
+            embedding, reranker = models()
+            store = VectorStore(Path(state['folder'].name) / 'vectors.sqlite3')
+            rag = make_rag(store, embedding, reranker)
+            if set(c['document_id'] for c in rag.retriever.chunks) != set(state['names']):
+                raise ValueError('索引与文档清单不一致')
+            state['rag'] = rag
+        except Exception as exc:
+            raise LibraryError('资料库索引加载失败；原文件保留，请检查本地模型和索引') from exc
+    return state
+
+
+def make_rag(store, embedding, reranker):
+    from financial_rag.generation.generator import DeepSeekGenerator
+    generator = DeepSeekGenerator() if os.getenv('DEEPSEEK_API_KEY') else None
+    return FinancialRAG(store, embedding, MODEL, reranker, generator, **RETRIEVAL_DEFAULTS)
 
 
 def build_workspace(files, previous=None):
@@ -192,8 +235,7 @@ def build_workspace(files, previous=None):
         new_vectors = embedding.encode_documents([c['text'] for c in chunks[old_count:]])
         vectors = np.concatenate((previous['rag'].retriever.vectors, new_vectors), axis=0) if previous else new_vectors
         store.replace_all(chunks, vectors, MODEL)
-        from financial_rag.generation.generator import DeepSeekGenerator
-        rag = FinancialRAG(store, embedding, MODEL, reranker, DeepSeekGenerator())
+        rag = make_rag(store, embedding, reranker)
         return dict(folder=folder, rag=rag, documents=documents, names=names,
                     conversation=ConversationMemory(secrets.token_hex(16)))
     except Exception:
@@ -210,14 +252,14 @@ def index(request: Request):
 @app.get("/api/status")
 def status(request: Request):
     with lock:
-        state = workspaces.get(request.session.get("id"))
+        state = get_workspace(request.session.get("id"))
         return dict(documents=state['documents'] if state else [], key_ready=bool(os.getenv('DEEPSEEK_API_KEY')))
 
 
 @app.get("/api/documents/{document_id}/structure")
 def document_structure(document_id: str, request: Request):
     with lock:
-        state = workspaces.get(request.session.get("id"))
+        state = get_workspace(request.session.get("id"))
         if not state or document_id not in state['names']:
             raise HTTPException(404, "文档不存在")
         return json.loads((Path(state['folder'].name)/f"{document_id}.json").read_text())
@@ -228,7 +270,7 @@ def document_original(document_id: str, request: Request):
     from fastapi.responses import Response
     from urllib.parse import quote
     with lock:
-        state = workspaces.get(request.session.get("id"))
+        state = get_workspace(request.session.get("id"))
         if not state or document_id not in state['names']:
             raise HTTPException(404, "文档不存在")
         name = state['names'][document_id]
@@ -239,8 +281,6 @@ def document_original(document_id: str, request: Request):
 
 @app.post("/api/upload")
 async def upload(request: Request):
-    if not os.getenv("DEEPSEEK_API_KEY"):
-        return error_response("请先在 .env 配置 DEEPSEEK_API_KEY")
     request.session.setdefault("id", secrets.token_urlsafe(24))
     async with request.form(max_files=10, max_fields=0) as form:
         files = form.getlist("files")
@@ -252,8 +292,14 @@ async def upload(request: Request):
 def process_upload(files, session_id):
     try:
         with lock:
-            old = workspaces.get(session_id)
+            old = get_workspace(session_id, hydrate=True)
             new = build_workspace(files, old)
+            if new is not old:
+                try:
+                    LibraryStore(LIBRARY_ROOT).commit(session_id, new)
+                except Exception:
+                    new['folder'].cleanup()
+                    raise
             workspaces[session_id] = new
             if old and old is not new:
                 old['folder'].cleanup()
@@ -317,8 +363,10 @@ def evidence_history(result, names):
 def ask(body: QuestionRequest, request: Request):
     started = perf_counter()
     question = body.question
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        return error_response("请先在 .env 配置 DEEPSEEK_API_KEY，再提问")
     with lock:
-        state = workspaces.get(request.session.get('id'))
+        state = get_workspace(request.session.get('id'), hydrate=True)
         if not state:
             return error_response("请先上传并阅读文档")
         try:
@@ -348,8 +396,11 @@ def ask(body: QuestionRequest, request: Request):
 def ask_stream(body: QuestionRequest, request: Request):
     question = body.question
     session_id = request.session.get('id')
-    if session_id not in workspaces:
-        return error_response("请先上传并阅读文档")
+    if not os.getenv('DEEPSEEK_API_KEY'):
+        return error_response('请先在 .env 配置 DEEPSEEK_API_KEY，再提问')
+    with lock:
+        if not get_workspace(session_id):
+            return error_response('请先上传并阅读文档')
     events = queue.Queue(maxsize=128)
     cancelled = threading.Event()
     delivered = threading.Event()
@@ -372,7 +423,7 @@ def ask_stream(body: QuestionRequest, request: Request):
                     break
             if not acquired or cancelled.is_set():
                 return
-            state = workspaces.get(session_id)
+            state = get_workspace(session_id, hydrate=True)
             if not state:
                 emit({"type": "error", "message": "资料库已清空，请重新上传"})
                 return
@@ -431,10 +482,47 @@ def ask_stream(body: QuestionRequest, request: Request):
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
+@app.delete("/api/documents/{document_id}")
+def delete_document(document_id: str, request: Request):
+    session_id = request.session.get('id')
+    with lock:
+        old = get_workspace(session_id)
+        if not old or document_id not in old['names']:
+            return error_response('文档不存在', 404)
+        if len(old['documents']) == 1:
+            LibraryStore(LIBRARY_ROOT).clear(session_id)
+            workspaces.pop(session_id, None)
+            old['folder'].cleanup()
+            return dict(documents=[])
+        folder = tempfile.TemporaryDirectory(prefix='rag_delete_')
+        try:
+            # Read saved vectors directly: deletion never re-encodes remaining documents.
+            chunks, vectors = VectorStore(Path(old['folder'].name)/'vectors.sqlite3').load(MODEL)
+            keep = [i for i,c in enumerate(chunks) if c['document_id'] != document_id]
+            documents = [d for d in old['documents'] if d['document_id'] != document_id]
+            names = {d['document_id']:d['name'] for d in documents}
+            for key,name in names.items():
+                for suffix in (Path(name).suffix.lower(), '.json'):
+                    shutil.copyfile(Path(old['folder'].name)/(key+suffix), Path(folder.name)/(key+suffix))
+            VectorStore(Path(folder.name)/'vectors.sqlite3').replace_all(
+                [chunks[i] for i in keep], vectors[keep], MODEL)
+            new = dict(folder=folder, rag=None, documents=documents, names=names,
+                       conversation=ConversationMemory(secrets.token_hex(16)))
+            LibraryStore(LIBRARY_ROOT).commit(session_id, new)
+            workspaces[session_id] = new
+            old['folder'].cleanup()
+            return dict(documents=documents)
+        except Exception:
+            folder.cleanup()
+            return error_response('删除失败，原资料库仍保留，请检查磁盘后重试', 500)
+
+
 @app.delete("/api/documents")
 def clear(request: Request):
     with lock:
-        old = workspaces.pop(request.session.get('id'), None)
+        session_id = request.session.get('id')
+        LibraryStore(LIBRARY_ROOT).clear(session_id)
+        old = workspaces.pop(session_id, None)
         if old:
             old['folder'].cleanup()
     return dict(ok=True)

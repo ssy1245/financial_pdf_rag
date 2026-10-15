@@ -1,6 +1,7 @@
 """Retrieval views only; complete cells and geometry stay in Document JSON."""
 import hashlib
 import json
+import re
 from .document import Document, location_label
 
 
@@ -16,7 +17,7 @@ def chunk_document(document: Document, tokenizer, max_tokens=300):
             return
         raw = source.model_dump(exclude_none=True)
         digest=hashlib.sha256(json.dumps([text,raw,element_ids,extra],sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:16]
-        chunks.append(dict(chunk_id=f"{document.document_id}_native-v1_t{max_tokens}_c{len(chunks)+1}_{digest}",
+        chunks.append(dict(chunk_id=f"{document.document_id}_{document.parser_version}_t{max_tokens}_c{len(chunks)+1}_{digest}",
             document_id=document.document_id,title=document.filename,page=source.page,text=text,
             word_count=len(text.split()),token_count=count(text),schema_version=document.schema_version,
             parser_version=document.parser_version,element_id=element_ids[0],context_refs=element_ids,
@@ -85,7 +86,18 @@ def chunk_document(document: Document, tokenizer, max_tokens=300):
         flush()
         table=tables[element.table_id]
         headers=[c for c in table.cells if any(c.row<=r<c.row+c.row_span for r in table.header_rows)]
-        header_text=" | ".join(table.column_names) if table.column_names else " | ".join(c.text for c in headers)
+        header_text=" | ".join(f"C{i}: {name}" for i,name in enumerate(table.column_names,1)) if table.column_names else " | ".join(f"C{c.column}: {c.text}" for c in headers)
+        # Explicit year labels travel with each value, including when a long row splits.
+        years = {}
+        for column in range(1, table.columns+1):
+            labels = [c.text.strip() for c in headers if c.column <= column < c.column+c.column_span
+                      and re.fullmatch(r'(?:19|20)\d{2}', c.text.strip())]
+            if len(set(labels)) == 1:
+                years[column] = labels[0]
+        if table.column_names:
+            for column,name in enumerate(table.column_names,1):
+                if re.fullmatch(r'(?:19|20)\d{2}',name.strip()):
+                    years[column] = name.strip()
         neighbors=[e for e in preceding if e.source.format==element.source.format
             and (e.source.format!="pdf" or e.source.page==element.source.page)]
         neighbor_text=" | ".join(e.text for e in neighbors)
@@ -103,7 +115,7 @@ def chunk_document(document: Document, tokenizer, max_tokens=300):
         for row in range(1,table.rows+1):
             cells=row_cells.get(row,[])
             if not any(c.text for c in cells): continue
-            row_text=" | ".join(f"C{c.column}: {c.text}" +
+            row_text=" | ".join(f"C{c.column}" + (f" [{years[c.column]}]" if c.column in years and c.column_span == 1 else "") + f": {c.text}" +
                 (f" [format={c.number_format}]" if c.number_format and c.number_format!='General' else "") for c in cells)
             source=table.source.model_copy(deep=True)
             source.row_start=source.row_end=row

@@ -109,3 +109,23 @@ def test_memory_drives_retrieval_until_exhausted(retriever):
     assert len(memory.evidence) == 6
     assert list(memory.citation_map) == [f"E{i}" for i in range(1, 7)]
     assert "[E1]" in memory.build_context() and "[E6]" in memory.build_context()
+
+
+def test_pipeline_threshold_applies_to_overrides_and_can_return_empty():
+    class ScoredReranker(Reranker):
+        def rerank(self, query, candidates, top_k):
+            self.calls += 1
+            return [{**c, 'rerank_score': score} for c, score in
+                    zip(candidates, [0.9, 0.1, 0.09, 0.01])][:top_k]
+
+    model = ScoredReranker()
+    rag = FinancialRAG(Store(), Embedding(), 'test', model, None,
+                       candidate_k=4, top_k=3, rerank_threshold=0.1)
+    trace = rag.retrieve('revenue', top_k=4)
+    assert len(trace['hybrid']) == 4
+    assert [c['rerank_score'] for c in trace['reranked']] == [0.9, 0.1]
+    assert model.calls == 1
+    rag.retriever.rerank_threshold = 0.95
+    assert rag.retrieve('revenue')['reranked'] == []
+    rag.retriever.rerank_threshold = None
+    assert len(rag.retrieve('revenue')['reranked']) == 3

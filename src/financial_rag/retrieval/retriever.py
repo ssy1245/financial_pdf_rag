@@ -3,7 +3,10 @@
 保留各阶段排名用于诊断；不调用回答模型、不管理证据记忆。
 调用方可用 exclude_chunk_ids 在多轮检索中排除已经交给模型的片段。
 """
+import math
 import numpy as np
+
+from financial_rag.retrieval.selection import select_evidence
 
 from financial_rag.indexing.bm25_index import BM25Index
 from financial_rag.retrieval.dense import dense_search
@@ -13,10 +16,13 @@ from financial_rag.retrieval.fusion import reciprocal_rank_fusion
 
 class Retriever:
     def __init__(self, store, embedding_model, embedding_model_name,
-                 reranker, candidate_k=20, top_k=5, rrf_k=60):
+                 reranker, candidate_k=20, top_k=5, rrf_k=60, rerank_threshold=None):
         if (any(type(value) is not int for value in (candidate_k, top_k, rrf_k))
                 or top_k <= 0 or candidate_k < top_k or rrf_k < 0):
             raise ValueError("要求 candidate_k >= top_k > 0，rrf_k >= 0")
+        if rerank_threshold is not None and not math.isfinite(rerank_threshold):
+            raise ValueError("rerank_threshold 必须为有限数或 None")
+        self.rerank_threshold = rerank_threshold
         self.chunks, self.vectors = store.load(embedding_model_name)
         self.chunks_by_id = {c["chunk_id"]: c for c in self.chunks}
         if len(self.chunks_by_id) != len(self.chunks):
@@ -33,7 +39,7 @@ class Retriever:
 
         top_k 可按次覆盖，范围为 1..candidate_k。未知 ID 忽略。
         排除后重新计算两路排名；BM25 仍使用完整语料的统计量。
-        返回空列表表示没有剩余片段，不代表剩余片段一定能回答问题。
+        返回空列表表示没有剩余片段或全部低于阈值；有结果也不保证能回答问题。
         """
         if not isinstance(question, str) or not question.strip():
             raise ValueError("问题不能为空")
@@ -64,6 +70,8 @@ class Retriever:
         bm25 = [r for r in bm25 if r["chunk_id"] not in excluded][:self.candidate_k]
         hybrid = reciprocal_rank_fusion(dense, bm25, k=self.rrf_k, top_k=self.candidate_k)
         reranked = self.reranker.rerank(question, hybrid, top_k=final_k)
+        if self.rerank_threshold is not None:
+            reranked = select_evidence(reranked, top_k=final_k, threshold=self.rerank_threshold)
         return {
             "dense": dense, "bm25": bm25, "hybrid": hybrid,
             "reranked": reranked,

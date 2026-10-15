@@ -27,19 +27,24 @@ def _add_table(doc, rows, columns, cells, source, **kwargs):
     doc.elements.append(Element(element_id=f"e{len(doc.elements)+1}", kind="table", table_id=tid, source=source))
 
 
-def _pdf(path, doc):
+def _pdf(path, doc, *, page_numbers=None):
     import pymupdf
     with pymupdf.open(path) as pdf:
         if pdf.needs_pass:
             raise ValueError("加密 PDF 需要先解密")
         doc.page_count = len(pdf)
         for number, page in enumerate(pdf, 1):
+            if page_numbers is not None and number not in page_numbers:
+                continue
             tables = []
             try:
                 tables = list(page.find_tables().tables)
             except Exception:
                 doc.warnings.append(f"第 {number} 页表格检测失败，保留原生文字待核验")
             table_boxes = [pymupdf.Rect(t.bbox) for t in tables]
+            from .pdf_tables import year_tables
+            inferred = year_tables(page, number, table_boxes)
+            consumed = [box for table in inferred for box in table['consumed']]
             # Use line-level boxes: a text block may straddle a detected table.
             items = []
             for block in page.get_text("dict", sort=True)["blocks"]:
@@ -48,7 +53,7 @@ def _pdf(path, doc):
                 for line in block["lines"]:
                     text = "".join(s["text"] for s in line["spans"]).strip()
                     box = pymupdf.Rect(line["bbox"])
-                    if not text or any(b.contains((box.tl + box.br) / 2) for b in table_boxes):
+                    if not text or any(b.contains((box.tl + box.br) / 2) for b in table_boxes + consumed):
                         continue
                     items.append((box.y0, box.x0, text, list(box)))
             for y, x, text, box in items:
@@ -74,6 +79,12 @@ def _pdf(path, doc):
                     header_rows=[] if table.header.external else [1], header_origin="heuristic",
                     column_names=[str(n or "") for n in table.header.names],
                     column_header_sources=[source.model_copy(update={"bbox":list(box)}) for box in table.header.cells if box])
+            for inferred_index, table in enumerate(inferred, len(tables)+1):
+                table.pop('consumed')
+                table['source'].table = inferred_index
+                for cell in table['cells']:
+                    cell.source.table = table['source'].table
+                _add_table(doc, **table)
             # Native text does not establish that all image regions were read.
             images = page.get_image_info()
             if not page.get_text().strip():
@@ -86,7 +97,7 @@ def _pdf(path, doc):
                         doc.ocr_requests.append(OCRRequest(document_id=doc.document_id,page=number,
                             bbox=list(box),reason="大幅图像区域未识别，可能包含扫描文字或表格"))
         doc.elements.sort(key=lambda e:(e.source.page, e.source.bbox[1], e.source.bbox[0]))
-    doc.warnings.append("PDF 表格为原生线框检测；无框表、复杂多栏及跨页续表需核验，跨页不自动合并")
+    doc.warnings.append("PDF 表格采用线框检测和明确年份列的坐标对齐；坐标恢复为启发式，未匹配内容保留原文。复杂多栏及跨页续表需核验，跨页不自动合并")
 
 
 def _word(path, doc):
